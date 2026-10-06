@@ -1,0 +1,240 @@
+/* CRM Comercial ACR · lê os dados do Supabase e calcula os indicadores no navegador */
+const C = window.ACR_CONFIG;
+const $ = id => document.getElementById(id);
+const sum = (a, f) => a.reduce((s, x) => s + (+f(x) || 0), 0);
+const by = (a, f) => a.reduce((m, x) => { const k = f(x) ?? "Não informado"; (m[k] = m[k] || []).push(x); return m; }, {});
+const R0 = v => isFinite(v) ? "R$ " + Math.round(v).toLocaleString("pt-BR") : "—";
+const R2 = v => isFinite(v) ? "R$ " + v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—";
+const P = (v, d = 1) => isFinite(v) ? (v * 100).toLocaleString("pt-BR", { maximumFractionDigits: d }) + "%" : "—";
+const N = v => isFinite(v) ? Math.round(v).toLocaleString("pt-BR") : "—";
+const X = v => isFinite(v) ? "R$ " + v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—";
+const REG = { SP: "Sudeste", RJ: "Sudeste", MG: "Sudeste", ES: "Sudeste", PR: "Sul", SC: "Sul", RS: "Sul", GO: "Centro-Oeste", DF: "Centro-Oeste", MT: "Centro-Oeste", MS: "Centro-Oeste", AC: "Norte", AM: "Norte", AP: "Norte", PA: "Norte", RO: "Norte", RR: "Norte", TO: "Norte" };
+const regiao = uf => REG[uf] || (uf && uf.length === 2 ? "Nordeste" : "Não informado");
+
+/* ---------- dados ---------- */
+let D = null, MES = null;
+async function api(path) {
+  const r = await fetch(`${C.SUPABASE_URL}/rest/v1/${path}`, { headers: { apikey: C.SUPABASE_KEY } });
+  if (!r.ok) throw new Error("Falha ao ler " + path.split("?")[0]);
+  return r.json();
+}
+async function carregar(mes) {
+  $("content").innerHTML = `<p class="muted">Carregando dados…</p>`;
+  const meses = await api("meses?select=id,rotulo&order=id.desc");
+  MES = mes || (meses[0] && meses[0].id);
+  $("mes").innerHTML = meses.length ? meses.map(m => `<option value="${m.id}" ${m.id === MES ? "selected" : ""}>${m.rotulo}</option>`).join("") : `<option>Sem meses</option>`;
+  if (!MES) { D = null; return; }
+  const q = `mes_id=eq.${MES}`;
+  const [campanhas, civel, prev, metas, prem] = await Promise.all([
+    api(`campanhas?${q}`), api(`contratos_civel?${q}`), api(`contratos_prev?${q}`), api(`metas?${q}`), api(`premissas_prev?${q}`)
+  ]);
+  D = { campanhas, civel, prev, metas, prem: prem[0] || { salario_beneficio: 2500, meses_atrasados_aux: 12, meses_atrasados_bpc: 6, parcelas_bit: 4, taxa_exito: 0.6, salario_minimo: 1621 } };
+}
+function honorario(ben, p) {
+  const sb = +p.salario_beneficio, sm = +p.salario_minimo;
+  if (/acidente/i.test(ben)) { const b = .5 * sb; return 4 * b + .3 * p.meses_atrasados_aux * b; }
+  if (/bpc/i.test(ben)) return 4 * sm + .3 * p.meses_atrasados_bpc * sm;
+  if (/incap/i.test(ben)) return .3 * .91 * sb * p.parcelas_bit;
+  if (/matern/i.test(ben)) return .3 * 4 * sm;
+  return 0;
+}
+
+/* ---------- indicadores do Marketing no Comercial ---------- */
+function mktCivel() {
+  const cp = D.campanhas.filter(c => c.area === "civel"), inv = sum(cp, c => c.investimento), cont = sum(cp, c => c.contatos);
+  const pagos = D.civel.filter(c => c.campanha_grupo), n = pagos.length;
+  const rec = sum(pagos, c => c.valor_recebido), contr = sum(pagos, c => c.valor_contratado);
+  const invTot = sum(D.campanhas, c => c.investimento), cpc = inv / cont, conv = n / cont, cac = inv / n;
+  const grupos = by(cp, c => c.grupo);
+  const camps = Object.entries(grupos).map(([g, l]) => {
+    const i = sum(l, c => c.investimento), k = sum(l, c => c.contatos), m = pagos.filter(c => c.campanha_grupo === g).length;
+    const tipo = { conversa: "conversas", visita: "visitas", clique: "cliques" }[l[0].tipo_contato];
+    return [g, i / m, `${X(i / k)} por contato · ${P(m / k, 2)} viram cliente`, `${N(k)} ${tipo} → ${m} contrato${m === 1 ? "" : "s"}`];
+  }).sort((a, b) => (isFinite(a[1]) ? a[1] : 1e9) - (isFinite(b[1]) ? b[1] : 1e9));
+  return {
+    lead: `Os anúncios do cível trouxeram ${n} clientes. Parte do dinheiro entra no mês; o resto vem em parcelas.`,
+    flow: [
+      { k: "Gasto com anúncios", v: R0(inv), d: `${cp.length} campanhas`, m: [["Fatia do orçamento total", P(inv / invTot, 0)]], edge: "geram contatos" },
+      { k: "Contatos recebidos", v: N(cont), d: "Conversas, visitas ao Instagram e cliques", m: [["Cada contato custou", X(cpc)]], edge: "equipe atende" },
+      { k: "Clientes fechados", v: `${n} contratos`, d: "Contratos que vieram dos anúncios", m: [["Contatos para 1 cliente", N(cont / n)]], edge: "gasto ÷ clientes" },
+      { k: "Custo por cliente (CAC)", v: R0(cac), d: "Quanto gastamos em anúncio para cada contrato", m: [["Limite de referência", "R$ 250"], ["Peso no valor do contrato", P(cac / (contr / n), 0)]], cac: true, edge: "valor dos contratos" },
+      { k: "Quanto entra", v: R0(contr), d: `${R0(rec)} já entraram e ${R0(contr - rec)} vêm em parcelas`, m: [["Valor médio do contrato", R0(contr / n)]], edge: "menos o gasto" },
+      { k: "Sobra depois dos anúncios", v: R0(contr - inv), d: `${R0(rec - inv)} já estão no caixa do mês`, m: [["Cada R$ 1 virou (no caixa)", X(rec / inv)], ["Cada R$ 1 virou (total)", X(contr / inv)]], profit: true }
+    ],
+    tree: { root: ["Custo por cliente", R0(cac), "por contrato"], a: ["Custo de cada contato", X(cpc), "preço do anúncio"], a1: ["Gasto com anúncios", R0(inv), ""], a2: ["Contatos recebidos", N(cont), ""], b: ["Viram cliente", P(conv, 2), `${n} de ${N(cont)}`], b1: ["Clientes ÷ contatos", P(conv, 2), `${n} de ${N(cont)}`], b2: null },
+    formula: `Custo por cliente = custo de cada contato ÷ % que vira cliente  →  ${X(cpc)} ÷ ${P(conv, 2)} = ${R0(cac)}`,
+    caption: "O custo por cliente depende de duas coisas: quanto pagamos por cada contato e quantos desses contatos viram cliente.",
+    camps, teto: 250,
+    insight: camps.length > 1 && isFinite(camps[0][1]) ? `O anúncio mais barato (${camps[0][0]}) conquista cliente por ${R0(camps[0][1])}; o mais caro (${camps[camps.length - 1][0]}) por ${R0(camps[camps.length - 1][1])}.` : "",
+    _: { inv, cont, n, rec, contr }
+  };
+}
+function mktPrev() {
+  const cp = D.campanhas.filter(c => c.area === "previdenciario"), inv = sum(cp, c => c.investimento), cont = sum(cp, c => c.contatos);
+  const pagos = D.prev.filter(c => c.campanha_grupo), prot = pagos.filter(c => c.protocolado === "sim"), n = prot.length;
+  const ex = +D.prem.taxa_exito, esp = sum(prot, c => honorario(c.beneficio, D.prem)) * ex;
+  const invTot = sum(D.campanhas, c => c.investimento), cpc = inv / cont, c1 = pagos.length / cont, c2 = n / pagos.length, cac = inv / n;
+  const camps = Object.entries(by(cp, c => c.grupo)).map(([g, l]) => {
+    const i = sum(l, c => c.investimento), k = sum(l, c => c.contatos), ct = pagos.filter(c => c.campanha_grupo === g), pr = ct.filter(c => c.protocolado === "sim").length;
+    return [g, i / pr, `${X(i / k)} por conversa · ${P(pr / k, 1)} viram cliente`, `${N(k)} conversas → ${ct.length} contratos → ${pr} protocolos`];
+  }).sort((a, b) => (isFinite(a[1]) ? a[1] : 1e9) - (isFinite(b[1]) ? b[1] : 1e9));
+  return {
+    lead: "Só conta o cliente com processo protocolado. O escritório recebe quando o benefício é aprovado, então o valor é uma previsão.",
+    flow: [
+      { k: "Gasto com anúncios", v: R0(inv), d: `${cp.length} campanhas`, m: [["Fatia do orçamento total", P(inv / invTot, 0)]], edge: "geram conversas" },
+      { k: "Contatos recebidos", v: `${N(cont)} conversas`, d: "WhatsApp e Instagram", m: [["Cada conversa custou", X(cpc)]], edge: "consultor atende" },
+      { k: "Clientes fechados", v: `${n} protocolados`, d: `${pagos.length} assinaram; ${n} protocolados`, m: [["Conversas que viram contrato", P(c1)], ["Contratos protocolados", P(c2, 0)]], edge: "gasto ÷ clientes" },
+      { k: "Custo por cliente (CAC)", v: R0(cac), d: "Quanto gastamos em anúncio para cada protocolo", m: [["Custo por contrato assinado", R0(inv / pagos.length)]], cac: true, edge: "honorários previstos" },
+      { k: "Quanto deve entrar", v: R0(esp), d: `Honorários previstos se ${P(ex, 0)} forem aprovados`, m: [["Honorário previsto por cliente", R0(esp / n)], ["Quando entra", "em 6 a 24 meses"]], edge: "menos o gasto" },
+      { k: "Sobra prevista", v: R0(esp - inv), d: "Só se confirma com a aprovação dos benefícios", m: [["Cada R$ 1 deve virar", X(esp / inv)]], profit: true }
+    ],
+    tree: { root: ["Custo por cliente", R0(cac), "por protocolo"], a: ["Custo de cada conversa", X(cpc), "preço do anúncio"], a1: ["Gasto com anúncios", R0(inv), ""], a2: ["Conversas", N(cont), ""], b: ["Viram cliente", P(n / cont), `${n} de ${N(cont)}`], b1: ["Viram contrato", P(c1), `${pagos.length} de ${N(cont)}`], b2: ["Contrato protocolado", P(c2), `${n} de ${pagos.length}`] },
+    formula: `Custo por cliente = custo da conversa ÷ (% que assina × % protocolado)  →  ${X(cpc)} ÷ (${P(c1)} × ${P(c2)}) = ${R0(cac)}`,
+    caption: "Três coisas definem o custo por cliente: preço da conversa, conversas que viram contrato e contratos que chegam ao protocolo.",
+    camps, teto: 200, insight: "",
+    _: { inv, cont, n, esp }
+  };
+}
+function mktCons() {
+  const a = mktCivel()._, b = mktPrev()._, inv = a.inv + b.inv, n = a.n + b.n, cont = a.cont + b.cont;
+  const camps = [...mktCivel().camps.map(c => [c[0] + " (cível)", c[1], "", c[3]]), ...mktPrev().camps.map(c => [c[0] + " (prev.)", c[1], "", c[3]])].sort((x, y) => (isFinite(x[1]) ? x[1] : 1e9) - (isFinite(y[1]) ? y[1] : 1e9));
+  const total = a.contr + b.esp;
+  return {
+    lead: "Esta aba soma o cível e o previdenciário.",
+    flow: [
+      { k: "Gasto com anúncios", v: R0(inv), d: `Cível ${R0(a.inv)} + Previdenciário ${R0(b.inv)}`, m: [["Fatia do orçamento total", P(inv / sum(D.campanhas, c => c.investimento), 0)]], edge: "geram contatos" },
+      { k: "Contatos recebidos", v: N(cont), d: `${N(a.cont)} do cível + ${N(b.cont)} do previdenciário`, m: [["Cada contato custou", X(inv / cont)]], edge: "equipe atende" },
+      { k: "Clientes fechados", v: N(n), d: `${a.n} contratos do cível + ${b.n} protocolos`, m: [["Contatos para 1 cliente", N(cont / n)]], edge: "gasto ÷ clientes" },
+      { k: "Custo por cliente (CAC)", v: R0(inv / n), d: "Média das duas áreas", m: [["Cível", R0(a.inv / a.n)], ["Previdenciário", R0(b.inv / b.n)]], cac: true, edge: "valor dos contratos" },
+      { k: "Quanto entra", v: R0(total), d: `${R0(a.rec)} já entraram; ${R0(total - a.rec)} vêm depois`, m: [["Já no caixa", R0(a.rec)]], edge: "menos o gasto" },
+      { k: "Sobra depois dos anúncios", v: R0(total - inv), d: `${R0(a.rec - inv)} de caixa no mês`, m: [["Cada R$ 1 deve virar", X(total / inv)]], profit: true }
+    ],
+    tree: { root: ["Custo por cliente", R0(inv / n), "média das duas áreas"], a: ["Cível", R0(a.inv / a.n), "por contrato"], a1: ["Gasto cível", R0(a.inv), ""], a2: ["Contratos", N(a.n), ""], b: ["Previdenciário", R0(b.inv / b.n), "por protocolo"], b1: ["Gasto previdenciário", R0(b.inv), ""], b2: ["Protocolos", N(b.n), ""], avg: true },
+    formula: `Custo por cliente = gasto total ÷ total de clientes  →  ${R0(inv)} ÷ ${N(n)} = ${R0(inv / n)}`,
+    caption: "A média pesa mais para a área que trouxe mais clientes.",
+    camps, teto: 250, insight: ""
+  };
+}
+const MKT = { civel: mktCivel, prev: mktPrev, cons: mktCons };
+function renderMkt(f) {
+  const flow = f.flow.map((n, i) => `<div class="step"><span class="step-n">${String(i + 1).padStart(2, "0")}</span><div class="node ${n.cac ? "cac" : ""} ${n.profit ? "profit" : ""}"><span class="k">${n.k}</span><span class="v">${n.v}</span><span class="d">${n.d}</span><div class="m">${n.m.map(([a, b]) => `<span>${a}: <b>${b}</b></span>`).join("")}</div></div><span class="edge-l">${n.edge ? "→ " + n.edge : ""}</span></div>`).join("");
+  const max = Math.max(...f.camps.map(c => isFinite(c[1]) ? c[1] : 0), 1);
+  const camps = f.camps.map(c => { const ok = isFinite(c[1]); const st = !ok ? ["bad", "Sem cliente"] : c[1] <= f.teto * .5 ? ["good", "Bom"] : c[1] <= f.teto ? ["warn", "Atenção"] : ["bad", "Caro"];
+    return `<div class="camp"><div class="top"><span class="name">${esc(c[0])}</span><span class="pill ${st[0]}">${st[1]}</span></div><span class="cv">${ok ? R2(c[1]) : "—"}</span><div class="meter"><span style="width:${ok ? c[1] / max * 100 : 0}%"></span></div>${c[2] ? `<span class="f">${c[2]}</span>` : ""}<span class="note">${c[3]}</span></div>`; }).join("");
+  $("view").innerHTML = `<section><div class="sec-head"><h2>O caminho do dinheiro</h2><p>${f.lead}</p></div><div class="flow">${flow}</div></section>
+    <section><div class="sec-head"><h2>De onde vem o custo por cliente</h2><p>Os números menores que, juntos, formam o custo por cliente.</p></div><div class="tree-wrap"><figure>${treeSVG(f.tree)}<figcaption>${f.caption}</figcaption></figure></div><div class="formula">${esc(f.formula)}</div></section>
+    <section><div class="sec-head"><h2>Custo por cliente em cada anúncio</h2><p>Limite de referência: ${R2(f.teto)} por cliente.</p></div><div class="camps">${camps}</div>${f.insight ? `<p class="callout">${f.insight}</p>` : ""}</section>`;
+}
+
+/* ---------- componentes ---------- */
+function bars(rows) {
+  const m = Math.max(...rows.map(r => r[1] + (typeof r[2] === "number" ? r[2] : 0)), 1);
+  return `<div class="bars">${rows.map(r => { const two = typeof r[2] === "number";
+    return `<div class="bar-row"><span class="lab" title="${esc(r[0])}">${esc(r[0])}</span><div class="track ${two ? "stack" : ""}"><div class="seg" style="width:${r[1] / m * 100}%"></div>${two ? `<div class="seg b" style="width:${r[2] / m * 100}%"></div>` : ""}</div><span class="val">${two ? r[1] + " / " + (r[1] + r[2]) : r[1]}${!two && r[2] ? " · " + esc(r[2]) : ""}</span></div>`; }).join("")}</div>`;
+}
+const count = (a, f) => Object.entries(by(a, f)).map(([k, l]) => [k, l.length]).sort((x, y) => y[1] - x[1]);
+const kpis = k => `<div class="kpis">${k.map(([l, v, s]) => `<div class="kpi"><span class="l">${l}</span><span class="v">${v}</span><span class="s">${s}</span></div>`).join("")}</div>`;
+const alerts = a => a.length ? `<div class="alerts">${a.map(([t, x]) => `<div class="alert"><span class="pill ${t}">${{ bad: "Urgente", warn: "Atenção", good: "Ponto forte" }[t]}</span><span>${x}</span></div>`).join("")}</div>` : `<p class="muted">Nenhum alerta neste mês.</p>`;
+const head = (crumb, t, d) => `<div class="page-head"><span class="crumb">${crumb}</span><h1>${t}</h1><p>${d}</p></div>`;
+const vazio = () => `<div class="soon"><span class="pill warn" style="justify-self:start">Sem dados</span><p>Ainda não há dados para este mês. Eles aparecem aqui assim que forem lançados.</p></div>`;
+
+/* ---------- telas ---------- */
+function viewMkt(k) {
+  const names = { civel: "Cível", prev: "Previdenciário", cons: "Cível + Previdenciário" };
+  $("content").innerHTML = head("Marketing no Comercial", "Do anúncio ao lucro", "Quanto custa conquistar cada cliente e quanto ele traz de volta. O custo por cliente (CAC) é o número principal.") +
+    `<div class="subtabs">${Object.keys(names).map(n => `<a href="#mkt-${n}" ${n === k ? 'aria-current="page"' : ""}>${names[n]}</a>`).join("")}</div>
+    <div class="glossary"><span><b>Custo por cliente (CAC):</b> quanto gastamos em anúncios para conseguir 1 cliente.</span><span><b>Contatos:</b> pessoas que chegaram pelo anúncio.</span><span><b>Valor a receber:</b> parcelas e honorários que ainda vão entrar.</span><span><b>Retorno:</b> quantos reais voltaram para cada R$ 1 gasto.</span></div><div id="view"></div>`;
+  if (!D || !D.campanhas.length) { $("view").innerHTML = vazio(); return; }
+  renderMkt(MKT[k]());
+}
+function viewCivel() {
+  const c = D ? D.civel : [];
+  $("content").innerHTML = head("Setores do Comercial · Cível", "Cível", "Contratos fechados pelos Closers: quem qualificou, de onde veio o cliente e como pagou.");
+  if (!c.length) { $("content").innerHTML += vazio(); return; }
+  const contr = sum(c, x => x.valor_contratado), rec = sum(c, x => x.valor_recebido), n = c.length;
+  const metas = Object.fromEntries(D.metas.filter(m => m.area === "civel").map(m => [m.pessoa, m.meta]));
+  const closers = Object.entries(by(c, x => x.closer)).sort((a, b) => b[1].length - a[1].length);
+  const sdrs = Object.entries(by(c, x => x.sdr)).sort((a, b) => b[1].length - a[1].length);
+  const sem = [["1 a 7", 1, 7], ["8 a 14", 8, 14], ["15 a 21", 15, 21], ["22 a 28", 22, 28], ["29 a 31", 29, 31]].map(([l, a, b]) => [l, c.filter(x => x.data && +x.data.slice(8, 10) >= a && +x.data.slice(8, 10) <= b).length]);
+  sem.push(["Sem data", c.filter(x => !x.data).length]);
+  const al = [], fim = sem[3][1] + sem[4][1], datados = n - sem[5][1];
+  if (datados && fim / datados < .2) al.push(["bad", `Só ${fim} contratos depois do dia 21. Vale entender se faltou contato, agenda ou registro.`]);
+  closers.forEach(([p, l]) => { const m = metas[p]; if (m && l.length / m < .5) al.push(["warn", `${p} fechou ${l.length} de ${m} (${P(l.length / m, 0)} da meta).`]); if (m && l.length >= m) al.push(["good", `${p} bateu a meta: ${l.length} de ${m}.`]); });
+  const semMidia = c.filter(x => !x.campanha_grupo).length;
+  if (semMidia / n >= .4) al.push(["good", `${semMidia} de ${n} clientes vieram sem anúncio (orgânico, indicação e outros).`]);
+  $("content").innerHTML += `<div class="sec">${kpis([["Contratos fechados", n, "No mês"], ["Valor contratado", R0(contr), "Soma dos contratos"], ["Já recebido", R0(rec), P(rec / contr, 0) + " do contratado"], ["A receber", R0(contr - rec), "Parcelas futuras"], ["Valor médio do contrato", R0(contr / n), "Recebido por contrato: " + R0(rec / n)]])}</div>
+  <div class="sec"><h2>Pontos de atenção</h2>${alerts(al)}</div>
+  <div class="sec"><h2>Time</h2><div class="grid2">
+    <div class="panel"><h3>Closers</h3><div class="tbl-wrap"><table><thead><tr><th>Closer</th><th>Meta</th><th class="n">Contratos</th><th class="n">Contratado</th><th class="n">Recebido</th></tr></thead><tbody>${closers.map(([p, l]) => { const m = metas[p]; return `<tr><td>${esc(p)}</td><td>${m ? `<div class="prog"><span style="width:${Math.min(l.length / m, 1) * 100}%"></span></div>` : '<span class="muted">sem meta</span>'}</td><td class="n">${l.length}${m ? " / " + m : ""}</td><td class="n">${R0(sum(l, x => x.valor_contratado))}</td><td class="n">${R0(sum(l, x => x.valor_recebido))}</td></tr>`; }).join("")}</tbody></table></div></div>
+    <div class="panel"><h3>SDRs</h3><div class="tbl-wrap"><table><thead><tr><th>SDR</th><th class="n">Contratos</th><th class="n">Contratado</th><th class="n">Recebido</th></tr></thead><tbody>${sdrs.map(([p, l]) => `<tr><td>${esc(p)}</td><td class="n">${l.length}</td><td class="n">${R0(sum(l, x => x.valor_contratado))}</td><td class="n">${R0(sum(l, x => x.valor_recebido))}</td></tr>`).join("")}</tbody></table></div></div></div></div>
+  <div class="sec"><h2>Clientes</h2><div class="grid2">
+    <div class="panel"><h3>De onde veio o cliente</h3>${bars(count(c, x => x.canal))}</div>
+    <div class="panel"><h3>Ritmo do mês</h3><p class="sub">Contratos por semana</p>${bars(sem)}</div>
+    <div class="panel"><h3>Como pagou</h3>${bars(count(c, x => x.forma_pagamento))}</div>
+    <div class="panel"><h3>Como fechou</h3>${bars(count(c, x => x.tipo_fechamento))}</div>
+    <div class="panel"><h3>Região</h3>${bars(count(c, x => regiao(x.uf)))}</div></div></div>`;
+}
+function viewPrev() {
+  const c = D ? D.prev : [];
+  $("content").innerHTML = head("Setores do Comercial · Previdenciário", "Previdenciário", "Contratos assinados pelos consultores. Só conta como venda o processo já protocolado.");
+  if (!c.length) { $("content").innerHTML += vazio(); return; }
+  const ex = +D.prem.taxa_exito, h = x => honorario(x.beneficio, D.prem) * ex;
+  const prot = c.filter(x => x.protocolado === "sim"), par = c.filter(x => x.protocolado !== "sim");
+  const cons = Object.entries(by(c, x => x.consultor)).map(([p, l]) => { const pr = l.filter(x => x.protocolado === "sim"); return [p, l.length, pr.length, sum(pr, h), sum(l.filter(x => x.protocolado !== "sim"), h), l.filter(x => x.protocolado === "em_branco").length]; }).sort((a, b) => b[2] - a[2]);
+  const mot = count(par, x => x.motivo_parada), ress = prot.filter(x => x.ressalva);
+  const al = [];
+  if (mot.length) al.push(["bad", `${mot[0][1]} contratos parados por: ${mot[0][0].toLowerCase()}. É o maior gargalo do setor.`]);
+  cons.filter(r => r[5] >= 5).forEach(r => al.push(["warn", `${r[0]} tem ${r[5]} contratos sem a coluna de protocolo preenchida. Confirmar antes de avaliar o desempenho.`]));
+  if (ress.length) al.push(["warn", `${ress.length} protocolo(s) com ressalva: ${ress.map(x => x.ressalva.toLowerCase()).join(", ")}.`]);
+  if (cons.length) { const best = [...cons].sort((a, b) => b[2] / b[1] - a[2] / a[1])[0]; al.push(["good", `${best[0]} protocolou ${P(best[2] / best[1], 0)} do que assinou.`]); }
+  $("content").innerHTML += `<div class="sec">${kpis([["Contratos assinados", c.length, "No mês"], ["Protocolados", prot.length, P(prot.length / c.length, 0) + " dos contratos"], ["Parados", par.length, "Sem protocolo"], ["Honorários previstos", R0(sum(prot, h)), `Se ${P(ex, 0)} forem aprovados`], ["Previsto parado", R0(sum(par, h)), "Dos contratos sem protocolo"]])}</div>
+  <div class="sec"><h2>Pontos de atenção</h2>${alerts(al)}</div>
+  <div class="sec"><h2>Consultores</h2><div class="panel"><div class="tbl-wrap"><table><thead><tr><th>Consultor</th><th>Protocolados</th><th class="n">Assinados</th><th class="n">Protocolados</th><th class="n">Honorário previsto</th><th class="n">Previsto parado</th></tr></thead><tbody>${cons.map(([p, a, pr, e, pa]) => `<tr><td>${esc(p)}</td><td><div class="prog"><span style="width:${pr / a * 100}%"></span></div></td><td class="n">${a}</td><td class="n">${pr} (${P(pr / a, 0)})</td><td class="n">${R0(e)}</td><td class="n">${R0(pa)}</td></tr>`).join("")}</tbody></table></div><p class="note">Honorário previsto: salário de benefício de ${R0(D.prem.salario_beneficio)}, atrasados de ${D.prem.meses_atrasados_aux} meses (Auxílio-Acidente) e ${D.prem.meses_atrasados_bpc} (BPC), ${P(ex, 0)} aprovados.</p></div></div>
+  <div class="sec"><div class="grid2">
+    <div class="panel"><h3>Por que os contratos pararam</h3>${bars(mot)}</div>
+    <div class="panel"><h3>Benefícios protocolados</h3>${bars(count(prot, x => x.beneficio))}</div>
+    <div class="panel"><h3>Onde estão os clientes</h3><p class="sub">Protocolados por estado</p>${bars(count(prot, x => x.uf))}</div>
+    <div class="panel"><h3>Assinados × protocolados</h3><div class="legend"><span><i style="background:var(--s1)"></i>Protocolados</span><span><i style="background:var(--s2)"></i>Parados</span></div>${bars(cons.map(r => [r[0], r[2], r[1] - r[2]]))}</div></div></div>`;
+}
+function viewSoon(nome, area, falta, ind) {
+  const cp = D ? D.campanhas.filter(c => c.area === area) : [];
+  const sabe = cp.length ? [`${R0(sum(cp, c => c.investimento))} em anúncios no mês.`, `${N(sum(cp, c => c.contatos))} contatos, a ${X(sum(cp, c => c.investimento) / sum(cp, c => c.contatos))} cada.`] : null;
+  $("content").innerHTML = head("Setores do Comercial · " + nome, nome, "Este setor entra no CRM assim que definirmos as regras.") +
+    `<div class="soon"><span class="pill warn" style="justify-self:start">Em construção</span>${sabe ? `<div><h3>O que já sabemos</h3><ul>${sabe.map(x => `<li>${x}</li>`).join("")}</ul></div>` : ""}<div><h3>O que falta</h3><ul>${falta.map(x => `<li>${x}</li>`).join("")}</ul></div><div><h3>Indicadores previstos</h3><ul>${ind.map(x => `<li>${x}</li>`).join("")}</ul></div></div>`;
+}
+const ROUTES = {
+  "mkt-civel": () => viewMkt("civel"), "mkt-prev": () => viewMkt("prev"), "mkt-cons": () => viewMkt("cons"),
+  "setor-civel": viewCivel, "setor-prev": viewPrev,
+  "setor-trab": () => viewSoon("Trabalhista", "trabalhista", ["Planilha de contratos fechados.", "Definir o que conta como venda válida."], ["Custo por cliente (CAC)", "Contratos por consultor", "Honorários previstos", "Motivos de perda"]),
+  "setor-cs": () => viewSoon("CS", "cs", ["Definir as regras do setor.", "Base de clientes ativos e pagamentos."], ["Clientes pagando em dia", "Benefícios aprovados e negados", "Indicações geradas", "Tempo até o primeiro retorno"])
+};
+function route() {
+  let r = location.hash.slice(1); if (!ROUTES[r]) r = "mkt-civel";
+  document.querySelectorAll(".nav a").forEach(a => a.dataset.r === r ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
+  try { ROUTES[r](); } catch (e) { $("content").innerHTML = `<p class="muted">Não foi possível montar esta tela. ${esc(e.message)}</p>`; }
+}
+
+/* ---------- tema ---------- */
+const SUN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+const MOON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
+const isDark = () => { const t = document.documentElement.dataset.theme; return t ? t === "dark" : matchMedia("(prefers-color-scheme: dark)").matches; };
+function paintBtn() { const d = isDark(); $("theme").innerHTML = (d ? SUN : MOON) + `<span>${d ? "Modo claro" : "Modo noturno"}</span>`; }
+$("theme").onclick = () => { const t = isDark() ? "light" : "dark"; document.documentElement.dataset.theme = t; try { localStorage.setItem("acr-tema", t); } catch (e) {} paintBtn(); };
+try { const t = localStorage.getItem("acr-tema"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+paintBtn();
+
+/* ---------- PIN e início ---------- */
+async function iniciar() {
+  $("lock").hidden = true; $("app").hidden = false;
+  try { await carregar(); } catch (e) { $("content").innerHTML = `<p class="muted">Não foi possível conectar ao banco de dados. Verifique a internet e recarregue a página.</p>`; return; }
+  route();
+}
+$("mes").onchange = async e => { await carregar(e.target.value); route(); };
+window.addEventListener("hashchange", route);
+$("pin-form").onsubmit = e => {
+  e.preventDefault();
+  if ($("pin").value === String(C.PIN)) { try { sessionStorage.setItem("acr-ok", "1"); } catch (_) {} iniciar(); }
+  else { $("pin-erro").hidden = false; $("pin").value = ""; $("pin").focus(); }
+};
+let ok = false; try { ok = sessionStorage.getItem("acr-ok") === "1"; } catch (_) {}
+if (ok) iniciar(); else $("pin").focus();

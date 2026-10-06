@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>CRM Comercial ACR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="style.css">
+<style>[hidden]{display:none!important}body{margin:0}</style>
+</head>
+<body>
+<div class="lock" id="lock">
+  <form id="pin-form" autocomplete="off">
+    <div class="logo-big">ACR</div>
+    <h1 style="font-size:22px">CRM de Análise do Comercial</h1>
+    <label for="pin" class="muted">Digite o PIN da equipe</label>
+    <input id="pin" type="password" inputmode="numeric" maxlength="12" required>
+    <button type="submit">Entrar</button>
+    <p class="erro" id="pin-erro" hidden>PIN incorreto. Tente de novo.</p>
+  </form>
+</div>
+
+<div class="app" id="app" hidden>
+  <aside class="side"><div class="side-inner">
+    <div class="logo"><i>ACR</i><span>CRM de Análise<br>do Comercial</span></div>
+    <div class="navs">
+      <nav class="nav" aria-label="Marketing no Comercial">
+        <span class="grp">Marketing no Comercial</span>
+        <a href="#mkt-civel" data-r="mkt-civel">Cível</a>
+        <a href="#mkt-prev" data-r="mkt-prev">Previdenciário</a>
+        <a href="#mkt-cons" data-r="mkt-cons">Cível + Previdenciário</a>
+      </nav>
+      <nav class="nav" aria-label="Setores">
+        <span class="grp">Setores do Comercial</span>
+        <a href="#setor-civel" data-r="setor-civel">Cível</a>
+        <a href="#setor-prev" data-r="setor-prev">Previdenciário</a>
+        <a href="#setor-trab" data-r="setor-trab">Trabalhista <span class="tag">em breve</span></a>
+        <a href="#setor-cs" data-r="setor-cs">CS <span class="tag">em breve</span></a>
+      </nav>
+    </div>
+    <div class="foot">Dados de clientes sem nome e sem telefone.</div>
+  </div></aside>
+  <main>
+    <div class="topbar">
+      <div class="brand"><b>ACR Advogados e Associados</b><span>Inteligência Comercial</span></div>
+      <div class="tools">
+        <label for="mes">Mês</label>
+        <select id="mes"></select>
+        <button class="theme-btn" id="theme" type="button" aria-label="Alternar modo claro e noturno"></button>
+      </div>
+    </div>
+    <div class="content" id="content"></div>
+  </main>
+</div>
+<script src="config.js"></script>
+<script src="tree.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
