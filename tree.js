@@ -24,7 +24,7 @@ function treeSVG(t){
   [["a",0],["b",1]].forEach(([k,i])=>{
     const n1=t[k+"1"], n2=t[k+"2"];
     if(n1&&n2){ s+=wire(cx[i],childY+bh,leafX[i][0],leafY)+wire(cx[i],childY+bh,leafX[i][1],leafY);
-      s+=op(cx[i],childY+bh+(leafY-childY-bh)/2, k==="a"||isCons?"÷":"×"); }
+      s+=op(cx[i],childY+bh+(leafY-childY-bh)/2, (k==="b"&&t.bop)||(k==="a"||isCons?"÷":"×")); }
     else if(n1){ s+=`<path class="wire" d="M${cx[i]} ${childY+bh} V${leafY}"/>`; }
   });
   s+=box(rootX,rootY,rw,rh,t.root,"root");
