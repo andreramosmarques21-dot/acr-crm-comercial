@@ -207,3 +207,19 @@ aside.side{position:relative;height:auto;overflow:visible;padding:0}
 .lock button{font:inherit;font-weight:600;padding:10px;border:0;border-radius:10px;background:var(--accent);color:var(--surface);cursor:pointer}
 .lock input:focus-visible,.lock button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .lock .erro{color:var(--bad);font-size:13.5px}
+.pcards{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+.pcard{border:1px solid var(--line);border-radius:10px;padding:14px;display:grid;gap:10px;background:var(--bg);min-width:0}
+.pcard .ph{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+.pcard .ph b{font-size:15px}
+.gl{list-style:none;margin:0;padding:0;display:grid;gap:6px;font-size:13px}
+.gl li{display:flex;justify-content:space-between;gap:10px;padding:6px 8px;border-radius:6px;border-left:3px solid var(--line)}
+.gl .g-n{color:var(--ink)}
+.gl .g-s{color:var(--ink-2);text-align:right}
+.gl .g-ok{border-left-color:var(--good);background:var(--good-bg)}
+.gl .g-ok .g-s{color:var(--good);font-weight:600}
+.gl .g-no{border-left-color:var(--warn);background:var(--warn-bg)}
+.gl .g-no .g-s{color:var(--warn)}
+.gl .g-lock{border-left-color:var(--line);opacity:.75}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:12px;color:var(--ink-2);background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:2px 9px}
+.chip b{color:var(--ink);font-family:var(--f-mono);font-weight:500}

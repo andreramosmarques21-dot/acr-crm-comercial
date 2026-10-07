@@ -43,6 +43,15 @@ function honorario(ben, p) {
 const FAIXAS_PREV = [[35, 60], [20, 40], [10, 30]]; // a partir de X protocolos → R$ por contrato (vale para todos)
 const faixaPrev = n => { const f = FAIXAS_PREV.find(([min]) => n >= min); return f ? { min: f[0], valor: f[1], premio: n * f[1] } : { min: 0, valor: 0, premio: 0 }; };
 const metaSetor = area => { const m = D.metas.find(x => x.area === area && x.pessoa === "SETOR"); return m ? +m.meta : null; };
+const FAIXAS_CLOSER = [[30000, .15], [20000, .07], [10000, .05]]; // valor recebido acumulado no mês → % de comissão sobre todo o valor
+const faixaCloser = v => { const f = FAIXAS_CLOSER.find(([min]) => v >= min); const prox = [...FAIXAS_CLOSER].reverse().find(([min]) => v < min); return { min: f ? f[0] : 0, pct: f ? f[1] : 0, comissao: f ? v * f[1] : 0, prox: prox ? prox[0] : null }; };
+// Regras da apresentação do comercial (cível)
+const REGRAS = { metaCloser: 30000, bonusPrimeiro: 300, bonusMaior: 500, metaSdr: 15, pctSdrMeta: .01, pctSdrBase: .005, diariaSdr: 15 };
+function diasDoMes(mes) { const [y, m] = MES.split("-").map(Number); return new Date(y, m, 0).getDate(); }
+// Promoção diária: R$ 15 por dia corrido; dia sem venda acumula e é pago no próximo dia com venda; o que sobra no fim do mês se perde.
+function diariaSdr(lista) { const dias = new Set(lista.filter(x => x.data).map(x => +x.data.slice(8, 10))); let acc = 0, pago = 0; for (let d = 1; d <= diasDoMes(); d++) { acc += REGRAS.diariaSdr; if (dias.has(d)) { pago += acc; acc = 0; } } return { pago, dias: dias.size }; }
+// Primeiro closer a atingir a meta individual, pela data dos contratos.
+function primeiroNaMeta(c) { let melhor = null; Object.entries(by(c, x => x.closer)).forEach(([p, l]) => { let acc = 0; for (const x of l.filter(x => x.data).sort((a, b) => a.data.localeCompare(b.data))) { acc += +x.valor_recebido; if (acc >= REGRAS.metaCloser) { if (!melhor || x.data < melhor.data) melhor = { p, data: x.data }; break; } } }); return melhor; }
 const SEM_CUSTO = ["Orgânico", "Indicação", "TikTok"];
 
 /* ---------- indicadores do Marketing no Comercial ---------- */
@@ -166,27 +175,64 @@ function viewCivel() {
   $("content").innerHTML = head("Setores do Comercial · Cível", "Cível", "Contratos fechados pelos Closers: quem qualificou, de onde veio o cliente e como pagou.");
   if (!c.length) { $("content").innerHTML += vazio(); return; }
   const contr = sum(c, x => x.valor_contratado), rec = sum(c, x => x.valor_recebido), n = c.length;
-  const metas = Object.fromEntries(D.metas.filter(m => m.area === "civel").map(m => [m.pessoa, m.meta]));
   const closers = Object.entries(by(c, x => x.closer)).sort((a, b) => b[1].length - a[1].length);
-  const sdrs = Object.entries(by(c, x => x.sdr)).sort((a, b) => b[1].length - a[1].length);
+  const sdrs = Object.entries(by(c.filter(x => x.sdr && !/pr[óo]prio/i.test(x.sdr)), x => x.sdr)).sort((a, b) => b[1].length - a[1].length);
+  const recTime = rec, timeMeta = metaSetor("civel") ? recTime >= metaSetor("civel") : false, primeiro = primeiroNaMeta(c);
+  const maior = [...closers].sort((a, b) => sum(b[1], x => x.valor_recebido) - sum(a[1], x => x.valor_recebido))[0];
+  const bonusCloser = p => (primeiro && primeiro.p === p ? REGRAS.bonusPrimeiro : 0) + (timeMeta && maior && maior[0] === p ? REGRAS.bonusMaior : 0);
+  const sdrCalc = sdrs.map(([p, l]) => { const bate = l.length >= REGRAS.metaSdr, pct = bate ? REGRAS.pctSdrMeta : REGRAS.pctSdrBase, d = diariaSdr(l); return { p, n: l.length, bate, pct, meta: recTime * pct, diaria: d.pago, dias: d.dias }; });
+  const recTotal = rec;
+  const gat = (estado, nome, det) => `<li class="g-${estado}"><span class="g-n">${nome}</span><span class="g-s">${det}</span></li>`;
+  const chip = (l, v) => `<span class="chip"><b>${v}</b> ${l}</span>`;
+  function cardCloser(p, l) {
+    const v = sum(l, x => x.valor_recebido), ct = sum(l, x => x.valor_contratado), f = faixaCloser(v), b1 = primeiro && primeiro.p === p, ehMaior = maior && maior[0] === p;
+    const faixas = [...FAIXAS_CLOSER].reverse().map(([min, pct]) => v >= min ? gat("ok", `Faixa ${P(pct, 0)} · R$ ${N(min)}`, f.min === min ? `Atingida · ${R0(v * pct)}` : "Superada") : gat("no", `Faixa ${P(pct, 0)} · R$ ${N(min)}`, `Falta ${R0(min - v)}`));
+    const bonus = [
+      b1 ? gat("ok", `Primeiro a bater ${R0(REGRAS.metaCloser)}`, `Conquistado · ${R0(REGRAS.bonusPrimeiro)}`) : gat(primeiro ? "lock" : "no", `Primeiro a bater ${R0(REGRAS.metaCloser)}`, primeiro ? `Indisponível · já ganho por ${primeiro.p}` : `Falta ${R0(REGRAS.metaCloser - v)}`),
+      ehMaior && timeMeta ? gat("ok", "Maior faturamento do mês", `Conquistado · ${R0(REGRAS.bonusMaior)}`) : gat("lock", "Maior faturamento do mês", ehMaior ? "Indisponível · time não bateu a meta geral" : `Indisponível · líder: ${maior[0]}`)
+    ];
+    const total = f.comissao + bonusCloser(p);
+    return `<div class="pcard"><div class="ph"><b>${esc(p)}</b><span><span class="muted">a receber</span> <b class="num">${R0(total)}</b></span></div>
+      <div class="prog" title="${R0(v)} de ${R0(REGRAS.metaCloser)}"><span style="width:${Math.min(v / REGRAS.metaCloser, 1) * 100}%"></span></div>
+      <ul class="gl">${faixas.join("")}${bonus.join("")}</ul>
+      <div class="chips">${chip("contratos", l.length)}${chip("recebido", R0(v))}${chip("contratado", R0(ct))}${chip("do recebido do time", P(v / recTotal, 0))}${chip("ticket médio", R0(ct / l.length))}</div></div>`;
+  }
+  function cardSdr(x) {
+    const l = c.filter(y => y.sdr === x.p), recG = sum(l, y => y.valor_recebido), dm = diasDoMes();
+    const lista = [
+      x.bate ? gat("ok", `Meta de ${REGRAS.metaSdr} qualificações · 1%`, `Atingida · ${R2(recTotal * REGRAS.pctSdrMeta)}`) : gat("no", `Meta de ${REGRAS.metaSdr} qualificações · 1%`, `Falta ${REGRAS.metaSdr - x.n} · valeria ${R2(recTotal * REGRAS.pctSdrMeta)}`),
+      x.bate ? gat("lock", "Base 0,5%", "Substituída pela meta de 1%") : gat("ok", "Base 0,5%", `Garantida · ${R2(recTotal * REGRAS.pctSdrBase)}`),
+      gat(x.diaria > 0 ? "ok" : "no", "Diária R$ 15 por dia", x.diaria > 0 ? `${R0(x.diaria)} · ${x.dias} dias com contrato` : "Nenhum dia com contrato"),
+      gat(x.diaria < dm * REGRAS.diariaSdr ? "no" : "ok", "Diária cheia do mês", x.diaria < dm * REGRAS.diariaSdr ? `Perdeu ${R0(dm * REGRAS.diariaSdr - x.diaria)} acumulados` : "Completa")
+    ];
+    const imed = l.filter(y => /imediato/i.test(y.tipo_fechamento || "")).length;
+    return `<div class="pcard"><div class="ph"><b>${esc(x.p)}</b><span><span class="muted">a receber</span> <b class="num">${R2(x.meta + x.diaria)}</b></span></div>
+      <div class="prog" title="${x.n} de ${REGRAS.metaSdr}"><span style="width:${Math.min(x.n / REGRAS.metaSdr, 1) * 100}%"></span></div>
+      <ul class="gl">${lista.join("")}</ul>
+      <div class="chips">${chip("qualificações fechadas", `${x.n}/${REGRAS.metaSdr}`)}${chip("recebido gerado", R0(recG))}${chip("fechados na hora", P(imed / l.length, 0))}${chip("dias com contrato", x.dias)}</div></div>`;
+  }
   const sem = [["1 a 7", 1, 7], ["8 a 14", 8, 14], ["15 a 21", 15, 21], ["22 a 28", 22, 28], ["29 a 31", 29, 31]].map(([l, a, b]) => [l, c.filter(x => x.data && +x.data.slice(8, 10) >= a && +x.data.slice(8, 10) <= b).length]);
   sem.push(["Sem data", c.filter(x => !x.data).length]);
   const al = [], fim = sem[3][1] + sem[4][1], datados = n - sem[5][1];
   if (datados && fim / datados < .2) al.push(["bad", `Só ${fim} contratos depois do dia 21. Vale entender se faltou contato, agenda ou registro.`]);
-  closers.forEach(([p, l]) => { const m = metas[p]; if (m && l.length / m < .5) al.push(["warn", `${p} fechou ${l.length} de ${m} (${P(l.length / m, 0)} da meta).`]); if (m && l.length >= m) al.push(["good", `${p} bateu a meta: ${l.length} de ${m}.`]); });
+  closers.forEach(([p, l]) => { const v = sum(l, x => x.valor_recebido), f = faixaCloser(v); if (f.pct) al.push(["good", `${p} acumulou ${R0(v)} e está na faixa de ${P(f.pct, 0)} (comissão de ${R0(f.comissao)}).`]); else if (v >= 5000) al.push(["warn", `${p} acumulou ${R0(v)}: faltam ${R0(10000 - v)} para a primeira faixa de comissão (5%).`]); });
+  if (primeiro) al.push(["good", `${primeiro.p} foi o primeiro a bater a meta individual de ${R0(REGRAS.metaCloser)} (dia ${primeiro.data.slice(8, 10)}): bônus de ${R0(REGRAS.bonusPrimeiro)}.`]);
+  if (maior && !timeMeta) al.push(["warn", `${maior[0]} teve o maior faturamento, mas o bônus de ${R0(REGRAS.bonusMaior)} só vale se o time bater a meta geral.`]);
+  sdrCalc.filter(x => !x.bate && x.n >= REGRAS.metaSdr - 3).forEach(x => al.push(["warn", `SDR ${x.p} teve ${x.n} leads qualificados fechados pelos Closers: faltou ${REGRAS.metaSdr - x.n} para a meta de ${REGRAS.metaSdr} (1% em vez de 0,5%).`]));
   const semMidia = c.filter(x => !x.campanha_grupo).length;
   if (semMidia / n >= .4) al.push(["good", `${semMidia} de ${n} clientes vieram sem anúncio (orgânico, indicação e outros).`]);
   $("content").innerHTML += `<div class="sec">${kpis([["Contratos fechados", n, "No mês"], ["Valor contratado", R0(contr), "Soma dos contratos"], ["Já recebido", R0(rec), metaSetor("civel") ? `${P(rec / metaSetor("civel"), 0)} da meta de ${R0(metaSetor("civel"))}` : P(rec / contr, 0) + " do contratado"], ["A receber", R0(contr - rec), "Parcelas futuras"], ["Valor médio do contrato", R0(contr / n), "Recebido por contrato: " + R0(rec / n)]])}</div>
   <div class="sec"><h2>Pontos de atenção</h2>${alerts(al)}</div>
-  <div class="sec"><h2>Time</h2><div class="grid2">
-    <div class="panel"><h3>Closers</h3><div class="tbl-wrap"><table><thead><tr><th>Closer</th><th>Meta</th><th class="n">Contratos</th><th class="n">Contratado</th><th class="n">Recebido</th></tr></thead><tbody>${closers.map(([p, l]) => { const m = metas[p]; return `<tr><td>${esc(p)}</td><td>${m ? `<div class="prog"><span style="width:${Math.min(l.length / m, 1) * 100}%"></span></div>` : '<span class="muted">sem meta</span>'}</td><td class="n">${l.length}${m ? " / " + m : ""}</td><td class="n">${R0(sum(l, x => x.valor_contratado))}</td><td class="n">${R0(sum(l, x => x.valor_recebido))}</td></tr>`; }).join("")}</tbody></table></div></div>
-    <div class="panel"><h3>SDRs</h3><div class="tbl-wrap"><table><thead><tr><th>SDR</th><th class="n">Contratos</th><th class="n">Contratado</th><th class="n">Recebido</th></tr></thead><tbody>${sdrs.map(([p, l]) => `<tr><td>${esc(p)}</td><td class="n">${l.length}</td><td class="n">${R0(sum(l, x => x.valor_contratado))}</td><td class="n">${R0(sum(l, x => x.valor_recebido))}</td></tr>`).join("")}</tbody></table></div></div></div></div>
+  <div class="sec"><h2>Time · metas individuais</h2>
+    <div class="panel"><h3>Closers</h3><p class="sub">Comissão sobre todo o valor recebido no mês (5% a partir de R$ 10 mil, 7% a partir de R$ 20 mil, 15% a partir de R$ 30 mil) e bônus extras.</p><div class="pcards">${closers.map(([p, l]) => cardCloser(p, l)).join("")}</div></div>
+    <div class="panel"><h3>SDRs</h3><p class="sub">O SDR qualifica o lead e agenda com o Closer; conta o lead dele que virou contrato. Meta de ${REGRAS.metaSdr} no mês → 1% do recebido do time (abaixo, 0,5%), mais a diária de R$ 15.</p><div class="pcards">${sdrCalc.map(cardSdr).join("")}</div><p class="note">Contratos sem data não entram na diária. A data usada é a do fechamento do contrato.</p></div></div>
   <div class="sec"><h2>Clientes</h2><div class="grid2">
     <div class="panel"><h3>De onde veio o cliente</h3>${bars(count(c, x => x.canal))}</div>
     <div class="panel"><h3>Ritmo do mês</h3><p class="sub">Contratos por semana</p>${bars(sem)}</div>
     <div class="panel"><h3>Como pagou</h3>${bars(count(c, x => x.forma_pagamento))}</div>
     <div class="panel"><h3>Como fechou</h3>${bars(count(c, x => x.tipo_fechamento))}</div>
-    <div class="panel"><h3>Região</h3>${bars(count(c, x => regiao(x.uf)))}</div></div></div>`;
+    <div class="panel"><h3>Região</h3>${bars(count(c, x => regiao(x.uf)))}</div>
+    <div class="panel"><h3>Estados</h3>${bars(count(c, x => x.uf))}</div></div></div>`;
 }
 function viewPrev() {
   const c = D ? D.prev : [];
@@ -219,7 +265,7 @@ function viewSoon(nome, area, falta, ind) {
 const ROUTES = {
   "mkt-civel": () => viewMkt("civel"), "mkt-prev": () => viewMkt("prev"), "mkt-cons": () => viewMkt("cons"),
   "setor-civel": viewCivel, "setor-prev": viewPrev,
-  "setor-trab": () => viewSoon("Trabalhista", "trabalhista", ["Planilha de contratos fechados.", "Definir o que conta como venda válida."], ["Custo por cliente (CAC)", "Contratos por consultor", "Honorários previstos", "Motivos de perda"]),
+  "setor-trab": () => viewSoon("Trabalhista", "trabalhista", ["Planilha de contratos fechados do mês.", "Definir o que conta como venda válida.", "Regras já definidas: meta de 15 contratos no mês (os dois colaboradores); até 14 contratos, R$ 30 por contrato; a partir de 15, R$ 40 por contrato."], ["Custo por cliente (CAC)", "Contratos por consultor", "Honorários previstos", "Motivos de perda"]),
   "setor-cs": () => viewSoon("CS", "cs", ["Definir as regras do setor.", "Base de clientes ativos e pagamentos."], ["Clientes pagando em dia", "Benefícios aprovados e negados", "Indicações geradas", "Tempo até o primeiro retorno"])
 };
 function route() {
