@@ -119,7 +119,6 @@ function mktPrev() {
   };
 }
 // Trabalhista: só contratos (sem valores em R$). Válido = documentação completa + cadastro no Astrea.
-const FAIXAS_TRAB = [[15, 40], [1, 30]]; // a partir de X contratos válidos do consultor → R$ por contrato
 const validoTrab = x => x.cadastro_astrea && x.documentacao;
 function mktTrab() {
   const cp = D.campanhas.filter(c => c.area === "trabalhista"), inv = sum(cp, c => c.investimento), cont = sum(cp, c => c.contatos);
@@ -288,7 +287,8 @@ function viewTrab() {
   if (!c.length) { $("content").innerHTML += vazio(); return; }
   const val = c.filter(validoTrab), pend = c.filter(x => !validoTrab(x)), n = c.length, nv = val.length, meta = metaSetor("trabalhista");
   const cp = D.campanhas.filter(x => x.area === "trabalhista"), inv = sum(cp, x => x.investimento);
-  const cons = Object.entries(by(c, x => x.consultor)).map(([p, l]) => { const v = l.filter(validoTrab).length, f = FAIXAS_TRAB.find(([min]) => v >= min); return { p, tot: l.length, v, valor: f ? f[1] : 0, premio: f ? v * f[1] : 0 }; }).sort((a, b) => b.v - a.v);
+  const LIM = meta || 15; // faixa de R$ 40 começa na meta do mês (setembro: 25; a partir de outubro: 15)
+  const cons = Object.entries(by(c, x => x.consultor)).map(([p, l]) => { const v = l.filter(validoTrab).length, valor = v >= LIM ? 40 : v >= 1 ? 30 : 0; return { p, tot: l.length, v, valor, premio: v * valor }; }).sort((a, b) => b.v - a.v);
   // Bônus de R$ 100: primeiro consultor a atingir, sozinho, a meta do mês em contratos válidos (pela data de fechamento).
   let top = null, topDia = null;
   if (meta) Object.entries(by(val, x => x.consultor)).forEach(([p, l]) => { const ord = [...l].sort((a, b) => (a.data || '9999').localeCompare(b.data || '9999')); if (ord.length >= meta) { const d = ord[meta - 1].data || '9999'; if (!topDia || d < topDia) { top = p; topDia = d; } } });
@@ -297,13 +297,13 @@ function viewTrab() {
   const chip = (l, v) => `<span class="chip"><b>${v}</b> ${l}</span>`;
   const card = x => { const bonus = x.p === top ? 100 : 0, pp = c.filter(y => y.consultor === x.p && !validoTrab(y)).length;
     const lista = [
-      x.v >= 1 && x.v < 15 ? gat("ok", "Até 14 contratos · R$ 30 cada", `Atingida · ${R0(x.v * 30)}`) : x.v >= 15 ? gat("lock", "Até 14 contratos · R$ 30 cada", "Superada pela faixa de R$ 40") : gat("no", "Até 14 contratos · R$ 30 cada", "Nenhum contrato válido"),
-      x.v >= 15 ? gat("ok", "A partir de 15 · R$ 40 cada", `Atingida · ${R0(x.v * 40)}`) : gat("no", "A partir de 15 · R$ 40 cada", `Faltam ${15 - x.v} contratos válidos`),
+      x.v >= 1 && x.v < LIM ? gat("ok", `Até ${LIM - 1} contratos · R$ 30 cada`, `Atingida · ${R0(x.v * 30)}`) : x.v >= LIM ? gat("lock", `Até ${LIM - 1} contratos · R$ 30 cada`, "Superada pela faixa de R$ 40") : gat("no", `Até ${LIM - 1} contratos · R$ 30 cada`, "Nenhum contrato válido"),
+      x.v >= LIM ? gat("ok", `A partir de ${LIM} · R$ 40 cada`, `Atingida · ${R0(x.v * 40)}`) : gat("no", `A partir de ${LIM} · R$ 40 cada`, LIM - x.v === 1 ? "Falta 1 contrato válido" : `Faltam ${LIM - x.v} contratos válidos`),
       bonus ? gat("ok", `Primeiro a atingir a meta (${meta}) · R$ 100`, topDia && topDia !== "9999" ? `Conquistado no dia ${topDia.slice(8, 10)}` : "Conquistado") : gat(top ? "lock" : "no", `Primeiro a atingir a meta (${meta}) · R$ 100`, top ? `Indisponível · já ganho por ${top}` : (meta - x.v === 1 ? "Falta 1 contrato válido" : `Faltam ${Math.max(meta - x.v, 0)} contratos válidos`)),
       pp ? gat("no", "Contratos pendentes", `${pp} sem documentação ou cadastro`) : gat("ok", "Contratos pendentes", "Nenhum")
     ];
     return `<div class="pcard"><div class="ph"><b>${esc(x.p)}</b><span><span class="muted">a receber</span> <b class="num">${R0(x.premio + bonus)}</b></span></div>
-      <div class="prog" title="${x.v} de 15"><span style="width:${Math.min(x.v / 15, 1) * 100}%"></span></div>
+      <div class="prog" title="${x.v} de ${LIM}"><span style="width:${Math.min(x.v / LIM, 1) * 100}%"></span></div>
       <ul class="gl">${lista.join("")}</ul>
       <div class="chips">${chip("fechados", x.tot)}${chip("válidos", x.v)}${chip("viraram válidos", P(x.v / x.tot, 0))}${chip("do setor", P(x.v / nv, 0))}</div></div>`; };
   const sem = [["1 a 7", 1, 7], ["8 a 14", 8, 14], ["15 a 21", 15, 21], ["22 a 28", 22, 28], ["29 a 31", 29, 31]].map(([l, a, b]) => [l, c.filter(x => x.data && +x.data.slice(8, 10) >= a && +x.data.slice(8, 10) <= b).length]);
@@ -317,7 +317,7 @@ function viewTrab() {
   const pctRows = rows => rows.map(([k, v]) => [k, v, P(v / n, 0)]);
   $("content").innerHTML += `<div class="sec">${kpis([["Contratos fechados", n, "No mês"], ["Contratos válidos", nv, P(nv / n, 0) + " dos fechados"], ["Pendentes", pend.length, "Sem documentação ou cadastro"], ["Meta do setor", meta ? `${nv}/${meta}` : "—", meta ? P(nv / meta, 0) + " da meta" : ""], ["Custo por contrato", R0(inv / nv), `Gasto de ${R0(inv)} ÷ válidos`]])}</div>
   <div class="sec"><h2>Pontos de atenção</h2>${alerts(al)}</div>
-  <div class="sec"><h2>Time · metas individuais</h2><div class="panel"><h3>Consultores</h3><p class="sub">Por consultor, contando só contratos válidos: R$ 30 por contrato até 14; a partir de 15, R$ 40 por contrato. O primeiro a atingir sozinho a meta do mês (${meta} contratos válidos) ganha R$ 100 a mais.</p><div class="pcards">${cons.map(card).join("")}</div></div></div>
+  <div class="sec"><h2>Time · metas individuais</h2><div class="panel"><h3>Consultores</h3><p class="sub">Por consultor, contando só contratos válidos: R$ 30 por contrato até ${LIM - 1}; a partir de ${LIM} (a meta do mês), R$ 40 por contrato, valendo para todos. O primeiro a atingir sozinho a meta do mês (${meta} contratos válidos) ganha R$ 100 a mais.</p><div class="pcards">${cons.map(card).join("")}</div></div></div>
   <div class="sec"><h2>Contratos</h2><div class="grid2">
     <div class="panel"><h3>Tipo de ação</h3>${bars(pctRows(count(c, x => x.tipo_acao)))}</div>
     <div class="panel"><h3>Teses</h3>${bars(pctRows(count(c, x => x.tese)))}</div>
