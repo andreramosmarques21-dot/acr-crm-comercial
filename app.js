@@ -54,6 +54,36 @@ function diariaSdr(lista) { const dias = new Set(lista.filter(x => x.data).map(x
 function primeiroNaMeta(c) { let melhor = null; Object.entries(by(c, x => x.closer)).forEach(([p, l]) => { let acc = 0; for (const x of l.filter(x => x.data).sort((a, b) => a.data.localeCompare(b.data))) { acc += +x.valor_recebido; if (acc >= REGRAS.metaCloser) { if (!melhor || x.data < melhor.data) melhor = { p, data: x.data }; break; } } }); return melhor; }
 const SEM_CUSTO = ["Orgânico", "Indicação", "TikTok"];
 
+/* ---------- Custo colaborador: valor fixo + comissões/premiações ---------- */
+const FIXO = { sdr: 2000, closer: 2400, prev: 2000, trab: 1800 };
+function equipeCivel() {
+  const c = D.civel, rec = sum(c, x => x.valor_recebido), meta = metaSetor("civel"), timeMeta = meta ? rec >= meta : false, primeiro = primeiroNaMeta(c);
+  const closers = Object.entries(by(c, x => x.closer)), sdrs = Object.entries(by(c.filter(x => x.sdr && !/pr[óo]prio/i.test(x.sdr)), x => x.sdr));
+  const maior = [...closers].sort((a, b) => sum(b[1], x => x.valor_recebido) - sum(a[1], x => x.valor_recebido))[0];
+  const P_ = {}; const get = p => P_[p] || (P_[p] = { p, papeis: [], fixo: 0, variavel: 0 });
+  sdrs.forEach(([p, l]) => { const o = get(p), bate = l.length >= REGRAS.metaSdr; o.papeis.push("SDR"); o.variavel += rec * (bate ? REGRAS.pctSdrMeta : REGRAS.pctSdrBase) + diariaSdr(l).pago; });
+  closers.forEach(([p, l]) => { const o = get(p), v = sum(l, x => x.valor_recebido); o.papeis.push("Closer"); o.variavel += faixaCloser(v).comissao + (primeiro && primeiro.p === p ? REGRAS.bonusPrimeiro : 0) + (timeMeta && maior && maior[0] === p ? REGRAS.bonusMaior : 0); });
+  Object.values(P_).forEach(o => o.fixo = o.papeis.includes("SDR") ? FIXO.sdr : FIXO.closer);
+  return fechaEquipe(P_);
+}
+function equipePrev() {
+  const P_ = {}; Object.entries(by(D.prev, x => x.consultor)).forEach(([p, l]) => { P_[p] = { p, papeis: ["Consultor"], fixo: FIXO.prev, variavel: faixaPrev(l.filter(x => x.protocolado === "sim").length).premio }; });
+  return fechaEquipe(P_);
+}
+function trabCalc() {
+  const meta = metaSetor("trabalhista"), LIM = meta || 15, val = D.trab.filter(validoTrab);
+  let top = null, topDia = null;
+  if (meta) Object.entries(by(val, x => x.consultor)).forEach(([p, l]) => { const ord = [...l].sort((a, b) => (a.data || "9999").localeCompare(b.data || "9999")); if (ord.length >= meta) { const d = ord[meta - 1].data || "9999"; if (!topDia || d < topDia) { top = p; topDia = d; } } });
+  const cons = Object.entries(by(D.trab, x => x.consultor)).map(([p, l]) => { const v = l.filter(validoTrab).length, valor = v >= LIM ? 40 : v >= 1 ? 30 : 0, bonus = p === top ? 100 : 0; return { p, tot: l.length, v, valor, premio: v * valor, bonus }; }).sort((a, b) => b.v - a.v);
+  return { meta, LIM, top, topDia, cons };
+}
+function equipeTrab() {
+  const P_ = {}; trabCalc().cons.forEach(x => { P_[x.p] = { p: x.p, papeis: ["Consultor"], fixo: FIXO.trab, variavel: x.premio + x.bonus }; });
+  return fechaEquipe(P_);
+}
+function fechaEquipe(P_) { const l = Object.values(P_); return { pessoas: l, fixo: sum(l, x => x.fixo), variavel: sum(l, x => x.variavel), total: sum(l, x => x.fixo + x.variavel) }; }
+const noCusto = (eq, edge) => ({ k: "Custo colaborador", v: R0(eq.total), d: `${eq.pessoas.length} pessoas: fixo ${R0(eq.fixo)} + comissões ${R0(eq.variavel)}`, m: [["Peso das comissões", P(eq.variavel / eq.total, 0)]], neg: true, edge });
+
 /* ---------- indicadores do Marketing no Comercial ---------- */
 // Regra: CAC = gasto com anúncios ÷ TODOS os clientes válidos (anúncio + orgânico + indicação + TikTok),
 // porque orgânico e indicação são frutos indiretos das campanhas.
@@ -65,7 +95,7 @@ function mktCivel() {
   const cp = D.campanhas.filter(c => c.area === "civel"), inv = sum(cp, c => c.investimento), cont = sum(cp, c => c.contatos);
   const todos = D.civel, n = todos.length, pagos = todos.filter(c => c.campanha_grupo), np = pagos.length, no = n - np;
   const rec = sum(todos, c => c.valor_recebido), contr = sum(todos, c => c.valor_contratado);
-  const invTot = sum(D.campanhas, c => c.investimento), cac = inv / n, meta = metaSetor("civel");
+  const invTot = sum(D.campanhas, c => c.investimento), cac = inv / n, meta = metaSetor("civel"), EQ = equipeCivel();
   const camps = Object.entries(by(cp, c => c.grupo)).map(([g, l]) => {
     const i = sum(l, c => c.investimento), k = sum(l, c => c.contatos), m = pagos.filter(c => c.campanha_grupo === g).length;
     const tipo = { conversa: "conversas", visita: "visitas", clique: "cliques" }[l[0].tipo_contato];
@@ -79,14 +109,16 @@ function mktCivel() {
       { k: "Clientes fechados", v: `${n} contratos`, d: `${np} de anúncio + ${no} de orgânico, indicação e TikTok`, m: [["Direto dos anúncios", P(np / n, 0)]], edge: "gasto ÷ clientes" },
       { k: "Custo por cliente (CAC)", v: R0(cac), d: "Gasto com anúncios ÷ todos os clientes do mês", m: [["Limite de referência", "R$ 250"], ["Peso no valor do contrato", P(cac / (contr / n), 0)]], cac: true, edge: "valor dos contratos" },
       { k: "Quanto entra", v: R0(contr), d: `${R0(rec)} já entraram e ${R0(contr - rec)} vêm em parcelas`, m: meta ? [["Meta do setor (recebido)", `${R0(rec)} de ${R0(meta)} · ${P(rec / meta, 0)}`], ["Valor médio do contrato", R0(contr / n)]] : [["Valor médio do contrato", R0(contr / n)]], edge: "menos o gasto" },
-      { k: "Sobra depois dos anúncios", v: R0(contr - inv), d: `${R0(rec - inv)} já estão no caixa do mês`, m: [["Cada R$ 1 virou (no caixa)", X(rec / inv)], ["Cada R$ 1 virou (total)", X(contr / inv)]], profit: true }
+      { k: "Lucro bruto", v: R0(contr - inv), d: `Contratado − anúncios. No caixa do mês: ${R0(rec - inv)}`, m: [["Cada R$ 1 virou (no caixa)", X(rec / inv)], ["Cada R$ 1 virou (total)", X(contr / inv)]], edge: "menos a equipe" },
+      noCusto(EQ, "lucro líquido"),
+      { k: "Lucro líquido", v: R0(contr - inv - EQ.total), d: `Total contratado. No caixa do mês: ${R0(rec - inv - EQ.total)}`, m: [["Caixa do mês", R0(rec - inv - EQ.total)], ["Total contratado", R0(contr - inv - EQ.total)]], profit: true }
     ],
     tree: { root: ["Custo por cliente", R0(cac), "por contrato"], a: ["Gasto com anúncios", R0(inv), `${cp.length} campanhas`], a1: null, a2: null, b: ["Clientes do mês", N(n), "todas as origens"], b1: ["Dos anúncios", N(np), `${P(np / n, 0)} do total`], b2: ["Sem anúncio", N(no), "orgânico, indicação, TikTok"], bop: "+" },
     formula: `Custo por cliente = gasto com anúncios ÷ clientes do mês  →  ${R0(inv)} ÷ ${n} = ${R2(cac)}`,
     caption: "Orgânico, indicação e TikTok entram na conta porque também são fruto indireto das campanhas. Quanto mais clientes vierem dessas origens, menor fica o custo por cliente.",
     camps, teto: 250,
     insight: `Entre os anúncios, o mais barato foi ${camps[0][0]} (${R0(camps[0][1])} por cliente). ${no} clientes chegaram sem custo direto de anúncio.`,
-    _: { inv, cont, n, rec, contr }
+    _: { inv, cont, n, rec, contr, eq: EQ.total }
   };
 }
 function mktPrev() {
@@ -94,7 +126,7 @@ function mktPrev() {
   const pagos = D.prev.filter(c => c.campanha_grupo), protPagos = pagos.filter(c => c.protocolado === "sim");
   const prot = D.prev.filter(c => c.protocolado === "sim"), n = prot.length, np = protPagos.length, no = n - np;
   const ex = +D.prem.taxa_exito, esp = sum(prot, c => honorario(c.beneficio, D.prem)) * ex;
-  const invTot = sum(D.campanhas, c => c.investimento), cac = inv / n;
+  const invTot = sum(D.campanhas, c => c.investimento), cac = inv / n, EQ = equipePrev();
   const cons = Object.entries(by(prot, c => c.consultor)).map(([p, l]) => [p, l.length, faixaPrev(l.length)]);
   const naMeta = cons.filter(c => c[2].min > 0).length;
   const camps = Object.entries(by(cp, c => c.grupo)).map(([g, l]) => {
@@ -109,20 +141,22 @@ function mktPrev() {
       { k: "Clientes fechados", v: `${n} protocolados`, d: `${np} de anúncio + ${no} de orgânico ou indicação`, m: [["Contratos de anúncio protocolados", P(np / pagos.length, 0)], ["Consultores na faixa de meta", `${naMeta} de ${cons.length}`]], edge: "gasto ÷ clientes" },
       { k: "Custo por cliente (CAC)", v: R0(cac), d: "Gasto com anúncios ÷ todos os protocolos do mês", m: [["Custo por contrato assinado", R0(inv / D.prev.length)]], cac: true, edge: "honorários previstos" },
       { k: "Quanto deve entrar", v: R0(esp), d: `Honorários previstos se ${P(ex, 0)} forem aprovados`, m: [["Honorário previsto por cliente", R0(esp / n)], ["Quando entra", "em 6 a 24 meses"]], edge: "menos o gasto" },
-      { k: "Sobra prevista", v: R0(esp - inv), d: "Só se confirma com a aprovação dos benefícios", m: [["Cada R$ 1 deve virar", X(esp / inv)]], profit: true }
+      { k: "Lucro bruto previsto", v: R0(esp - inv), d: "Honorários previstos − anúncios. Só se confirma com a aprovação dos benefícios", m: [["Cada R$ 1 deve virar", X(esp / inv)]], edge: "menos a equipe" },
+      noCusto(EQ, "lucro líquido"),
+      { k: "Lucro líquido previsto", v: R0(esp - inv - EQ.total), d: `Caixa do mês: ${R0(-inv - EQ.total)} (os honorários entram em 6 a 24 meses)`, m: [["Caixa do mês", R0(-inv - EQ.total)]], profit: true }
     ],
     tree: { root: ["Custo por cliente", R0(cac), "por protocolo"], a: ["Gasto com anúncios", R0(inv), `${cp.length} campanhas`], a1: null, a2: null, b: ["Protocolos do mês", N(n), "todas as origens"], b1: ["Dos anúncios", N(np), `${P(np / n, 0)} do total`], b2: ["Sem anúncio", N(no), "orgânico e indicação"], bop: "+" },
     formula: `Custo por cliente = gasto com anúncios ÷ protocolos do mês  →  ${R0(inv)} ÷ ${n} = ${R2(cac)}`,
     caption: "Todos os protocolos do mês entram na conta, inclusive os de orgânico e indicação, que também são fruto indireto das campanhas.",
     camps, teto: 200, insight: "",
-    _: { inv, cont, n, esp }
+    _: { inv, cont, n, esp, eq: EQ.total }
   };
 }
 // Trabalhista: só contratos (sem valores em R$). Válido = documentação completa + cadastro no Astrea.
 const validoTrab = x => x.cadastro_astrea && x.documentacao;
 function mktTrab() {
   const cp = D.campanhas.filter(c => c.area === "trabalhista"), inv = sum(cp, c => c.investimento), cont = sum(cp, c => c.contatos);
-  const tot = D.trab.length, n = D.trab.filter(validoTrab).length, cac = inv / n, meta = metaSetor("trabalhista");
+  const tot = D.trab.length, n = D.trab.filter(validoTrab).length, cac = inv / n, meta = metaSetor("trabalhista"), EQ = equipeTrab();
   return {
     lead: `O trabalhista fechou ${tot} contratos, e ${n} estão válidos (documentação completa e cadastro no Astrea). Todos vêm da campanha do setor. Aqui não há valores em R$: o resultado é medido em contratos.`,
     flow: [
@@ -130,14 +164,16 @@ function mktTrab() {
       { k: "Contatos recebidos", v: `${N(cont)} conversas`, d: "WhatsApp e Instagram", m: [["Cada conversa custou", X(inv / cont)]], edge: "consultor fecha" },
       { k: "Contratos fechados", v: `${tot} contratos`, d: `${tot - n} ainda sem documentação ou cadastro`, m: [["Conversas que viram contrato", P(tot / cont)]], edge: "documentação + Astrea" },
       { k: "Contratos válidos", v: `${n} válidos`, d: "Documentação completa e cadastro no Astrea", m: meta ? [["Meta do setor", `${n} de ${meta} · ${P(n / meta, 0)}`], ["Fechados que ficaram válidos", P(n / tot, 0)]] : [["Fechados que ficaram válidos", P(n / tot, 0)]], edge: "gasto ÷ válidos" },
-      { k: "Custo por contrato (CAC)", v: R0(cac), d: "Gasto com anúncios ÷ contratos válidos", m: [["Se todos os fechados fossem válidos", R0(inv / tot)]], cac: true }
+      { k: "Custo por contrato (CAC)", v: R0(cac), d: "Gasto com anúncios ÷ contratos válidos", m: [["Se todos os fechados fossem válidos", R0(inv / tot)]], cac: true , edge: "mais a equipe" },
+      noCusto(EQ, "custo total"),
+      { k: "Custo total do setor", v: R0(inv + EQ.total), d: "Anúncios + equipe. O setor não tem valores em R$ de receita", m: [["Custo total por contrato válido", R0((inv + EQ.total) / n)]], neg: true }
     ],
     tree: { root: ["Custo por contrato", R0(cac), "por contrato válido"], a: ["Gasto com anúncios", R0(inv), "campanha Trabalhista"], a1: null, a2: null, b: ["Contratos válidos", N(n), "documentação + Astrea"], b1: ["Fechados", N(tot), "no mês"], b2: ["Viraram válidos", P(n / tot, 0), `${n} de ${tot}`], bop: "×" },
     formula: `Custo por contrato = gasto com anúncios ÷ contratos válidos  →  ${R0(inv)} ÷ ${n} = ${R2(cac)}`,
     caption: "Só conta o contrato com documentação completa e cadastro no Astrea. Cada contrato pendente que for regularizado reduz o custo por contrato.",
     camps: cp.map(c => [c.nome + " · " + c.plataforma, cac, `${X(c.investimento / c.contatos)} por conversa · ${P(n / c.contatos, 1)} viraram contrato válido`, `${N(c.contatos)} conversas → ${tot} fechados → ${n} válidos`]),
     teto: 200, insight: "",
-    _: { inv, cont, n }
+    _: { inv, cont, n, eq: EQ.total }
   };
 }
 function mktCons() {
@@ -145,7 +181,7 @@ function mktCons() {
   const T = D.trab && D.trab.length ? mktTrab() : null, t = T ? T._ : { inv: 0, cont: 0, n: 0 };
   const inv = a.inv + b.inv + t.inv, n = a.n + b.n + t.n, cont = a.cont + b.cont + t.cont;
   const camps = [...A.camps.map(c => [c[0] + " (cível)", c[1], "", c[3]]), ...B.camps.map(c => [c[0] + " (prev.)", c[1], "", c[3]]), ...(T ? T.camps.map(c => [c[0] + " (trab.)", c[1], "", c[3]]) : [])].sort((x, y) => (isFinite(x[1]) ? x[1] : 1e9) - (isFinite(y[1]) ? y[1] : 1e9));
-  const total = a.contr + b.esp;
+  const total = a.contr + b.esp, EQT = a.eq + b.eq + (t.eq || 0);
   const setores = ["cível", "previdenciário"].concat(T ? ["trabalhista"] : []);
   return {
     lead: `Todos os setores reúne o investimento em anúncios e o resultado de todos os setores com dados no mês (${setores.join(", ")}), com todas as origens de cliente.${T ? " O trabalhista entra em gasto e clientes, mas não tem valores em R$." : ""}`,
@@ -155,7 +191,9 @@ function mktCons() {
       { k: "Clientes fechados", v: N(n), d: `${a.n} contratos do cível + ${b.n} protocolos${T ? ` + ${t.n} contratos trabalhistas` : ""}`, m: [["Contatos para 1 cliente", N(cont / n)]], edge: "gasto ÷ clientes" },
       { k: "Custo por cliente (CAC)", v: R0(inv / n), d: "Gasto total ÷ clientes de todos os setores", m: [["Cível", R0(a.inv / a.n)], ["Previdenciário", R0(b.inv / b.n)]].concat(T ? [["Trabalhista", R0(t.inv / t.n)]] : []), cac: true, edge: "valor dos contratos" },
       { k: "Quanto entra", v: R0(total), d: `${R0(a.rec)} já entraram; ${R0(total - a.rec)} vêm depois${T ? " (trabalhista sem valor em R$)" : ""}`, m: [["Já no caixa", R0(a.rec)]], edge: "menos o gasto" },
-      { k: "Sobra depois dos anúncios", v: R0(total - inv), d: `${R0(a.rec - inv)} de caixa no mês, já descontado todo o gasto com anúncios`, m: [["Cada R$ 1 deve virar", X(total / inv)]], profit: true }
+      { k: "Lucro bruto", v: R0(total - inv), d: `${R0(a.rec - inv)} de caixa no mês, já descontado todo o gasto com anúncios`, m: [["Cada R$ 1 deve virar", X(total / inv)]], edge: "menos a equipe" },
+      { k: "Custo colaborador", v: R0(EQT), d: `Cível ${R0(a.eq)} + Previdenciário ${R0(b.eq)}${T ? ` + Trabalhista ${R0(t.eq)}` : ""}`, m: [["Fixo + comissões", "todos os setores"]], neg: true, edge: "lucro líquido" },
+      { k: "Lucro líquido", v: R0(total - inv - EQT), d: `Caixa do mês: ${R0(a.rec - inv - EQT)}`, m: [["Caixa do mês", R0(a.rec - inv - EQT)], ["Total (com previsões)", R0(total - inv - EQT)]], profit: true }
     ],
     tree: { root: ["Custo por cliente", R0(inv / n), "média de todos os setores"], a: ["Gasto total", R0(inv), `${setores.length} setores`], a1: null, a2: null, b: ["Clientes válidos", N(n), setores.length + " setores"], b1: null, b2: null },
     formula: `Custo por cliente = gasto total ÷ total de clientes  →  ${R0(inv)} ÷ ${N(n)} = ${R2(inv / n)}`,
@@ -165,7 +203,7 @@ function mktCons() {
 }
 const MKT = { civel: mktCivel, prev: mktPrev, trab: mktTrab, cons: mktCons };
 function renderMkt(f) {
-  const flow = f.flow.map((n, i) => `<div class="step"><span class="step-n">${String(i + 1).padStart(2, "0")}</span><div class="node ${n.cac ? "cac" : ""} ${n.profit ? "profit" : ""}"><span class="k">${n.k}</span><span class="v">${n.v}</span><span class="d">${n.d}</span><div class="m">${n.m.map(([a, b]) => `<span>${a}: <b>${b}</b></span>`).join("")}</div></div><span class="edge-l">${n.edge ? "→ " + n.edge : ""}</span></div>`).join("");
+  const flow = f.flow.map((n, i) => `<div class="step"><span class="step-n">${String(i + 1).padStart(2, "0")}</span><div class="node ${n.cac ? "cac" : ""} ${n.profit ? "profit" : ""} ${n.neg ? "neg" : ""}"><span class="k">${n.k}</span><span class="v">${n.v}</span><span class="d">${n.d}</span><div class="m">${n.m.map(([a, b]) => `<span>${a}: <b>${b}</b></span>`).join("")}</div></div><span class="edge-l">${n.edge ? "→ " + n.edge : ""}</span></div>`).join("");
   const max = Math.max(...f.camps.map(c => isFinite(c[1]) ? c[1] : 0), 1);
   const camps = f.camps.map(c => { const ok = isFinite(c[1]); const st = c[1] === 0 ? ["good", "Sem custo"] : !ok ? ["bad", "Sem cliente"] : c[1] <= f.teto * .5 ? ["good", "Bom"] : c[1] <= f.teto ? ["warn", "Atenção"] : ["bad", "Caro"];
     return `<div class="camp"><div class="top"><span class="name">${esc(c[0])}</span><span class="pill ${st[0]}">${st[1]}</span></div><span class="cv">${ok ? R2(c[1]) : "—"}</span><div class="meter"><span style="width:${ok ? c[1] / max * 100 : 0}%"></span></div>${c[2] ? `<span class="f">${c[2]}</span>` : ""}<span class="note">${c[3]}</span></div>`; }).join("");
@@ -216,10 +254,10 @@ function viewCivel() {
       b1 ? gat("ok", `Primeiro a bater ${R0(REGRAS.metaCloser)}`, `Conquistado · ${R0(REGRAS.bonusPrimeiro)}`) : gat(primeiro ? "lock" : "no", `Primeiro a bater ${R0(REGRAS.metaCloser)}`, primeiro ? `Indisponível · já ganho por ${primeiro.p}` : `Falta ${R0(REGRAS.metaCloser - v)}`),
       ehMaior && timeMeta ? gat("ok", "Maior faturamento do mês", `Conquistado · ${R0(REGRAS.bonusMaior)}`) : gat("lock", "Maior faturamento do mês · R$ 500", ehMaior ? `Líder do mês, mas bloqueado: time em ${P(recTotal / metaSetor("civel"), 0)} da meta geral (faltam ${R0(metaSetor("civel") - recTotal)})` : `Indisponível · líder: ${maior[0]}`)
     ];
-    const total = f.comissao + bonusCloser(p);
+    const ehSdr = sdrCalc.some(y => y.p === p), fixo = ehSdr ? 0 : FIXO.closer, total = fixo + f.comissao + bonusCloser(p);
     return `<div class="pcard"><div class="ph"><b>${esc(p)}</b><span><span class="muted">a receber</span> <b class="num">${R0(total)}</b></span></div>
       <div class="prog" title="${R0(v)} de ${R0(REGRAS.metaCloser)}"><span style="width:${Math.min(v / REGRAS.metaCloser, 1) * 100}%"></span></div>
-      <ul class="gl">${faixas.join("")}${bonus.join("")}</ul>
+      <ul class="gl">${ehSdr ? gat("lock", "Valor fixo", "Contado no cartão de SDR (R$ 2.000)") : gat("ok", "Valor fixo · Closer", R0(FIXO.closer))}${faixas.join("")}${bonus.join("")}</ul>
       <div class="chips">${chip("contratos", l.length)}${chip("recebido", R0(v))}${chip("contratado", R0(ct))}${chip("do recebido do time", P(v / recTotal, 0))}${chip("ticket médio", R0(ct / l.length))}</div></div>`;
   }
   function cardSdr(x) {
@@ -231,9 +269,9 @@ function viewCivel() {
       gat(x.diaria < dm * REGRAS.diariaSdr ? "no" : "ok", "Diária cheia do mês", x.diaria < dm * REGRAS.diariaSdr ? `Perdeu ${R0(dm * REGRAS.diariaSdr - x.diaria)} acumulados` : "Completa")
     ];
     const imed = l.filter(y => /imediato/i.test(y.tipo_fechamento || "")).length;
-    return `<div class="pcard"><div class="ph"><b>${esc(x.p)}</b><span><span class="muted">a receber</span> <b class="num">${R2(x.meta + x.diaria)}</b></span></div>
+    return `<div class="pcard"><div class="ph"><b>${esc(x.p)}</b><span><span class="muted">a receber</span> <b class="num">${R2(FIXO.sdr + x.meta + x.diaria)}</b></span></div>
       <div class="prog" title="${x.n} de ${REGRAS.metaSdr}"><span style="width:${Math.min(x.n / REGRAS.metaSdr, 1) * 100}%"></span></div>
-      <ul class="gl">${lista.join("")}</ul>
+      <ul class="gl">${gat("ok", "Valor fixo · SDR", R0(FIXO.sdr))}${lista.join("")}</ul>
       <div class="chips">${chip("qualificações fechadas", `${x.n}/${REGRAS.metaSdr}`)}${chip("recebido gerado", R0(recG))}${chip("fechados na hora", P(imed / l.length, 0))}${chip("dias com contrato", x.dias)}</div></div>`;
   }
   const sem = [["1 a 7", 1, 7], ["8 a 14", 8, 14], ["15 a 21", 15, 21], ["22 a 28", 22, 28], ["29 a 31", 29, 31]].map(([l, a, b]) => [l, c.filter(x => x.data && +x.data.slice(8, 10) >= a && +x.data.slice(8, 10) <= b).length]);
@@ -246,7 +284,7 @@ function viewCivel() {
   sdrCalc.filter(x => !x.bate && x.n >= REGRAS.metaSdr - 3).forEach(x => al.push(["warn", `SDR ${x.p} teve ${x.n} leads qualificados fechados pelos Closers: faltou ${REGRAS.metaSdr - x.n} para a meta de ${REGRAS.metaSdr} (1% em vez de 0,5%).`]));
   const semMidia = c.filter(x => !x.campanha_grupo).length;
   if (semMidia / n >= .4) al.push(["good", `${semMidia} de ${n} clientes vieram sem anúncio (orgânico, indicação e outros).`]);
-  $("content").innerHTML += `<div class="sec">${kpis([["Contratos fechados", n, "No mês"], ["Valor contratado", R0(contr), "Soma dos contratos"], ["Já recebido", R0(rec), metaSetor("civel") ? `${P(rec / metaSetor("civel"), 0)} da meta de ${R0(metaSetor("civel"))}` : P(rec / contr, 0) + " do contratado"], ["A receber", R0(contr - rec), "Parcelas futuras"], ["Valor médio do contrato", R0(contr / n), "Recebido por contrato: " + R0(rec / n)]])}</div>
+  $("content").innerHTML += `<div class="sec">${kpis([["Contratos fechados", n, "No mês"], ["Valor contratado", R0(contr), "Soma dos contratos"], ["Já recebido", R0(rec), metaSetor("civel") ? `${P(rec / metaSetor("civel"), 0)} da meta de ${R0(metaSetor("civel"))}` : P(rec / contr, 0) + " do contratado"], ["A receber", R0(contr - rec), "Parcelas futuras"], ["Valor médio do contrato", R0(contr / n), "Recebido por contrato: " + R0(rec / n)], ["Custo colaborador", R0(equipeCivel().total), `Fixo ${R0(equipeCivel().fixo)} + comissões ${R0(equipeCivel().variavel)}`]])}</div>
   <div class="sec"><h2>Pontos de atenção</h2>${alerts(al)}</div>
   <div class="sec"><h2>Time · metas individuais</h2>
     <div class="panel"><h3>Closers</h3><p class="sub">Comissão sobre todo o valor recebido no mês (5% a partir de R$ 10 mil, 7% a partir de R$ 20 mil, 15% a partir de R$ 30 mil) e bônus extras.</p><div class="pcards">${closers.map(([p, l]) => cardCloser(p, l)).join("")}</div></div>
@@ -272,9 +310,9 @@ function viewPrev() {
   cons.filter(r => r[5] >= 5).forEach(r => al.push(["warn", `${r[0]} tem ${r[5]} contratos sem a coluna de protocolo preenchida. Confirmar antes de avaliar o desempenho.`]));
   if (ress.length) al.push(["warn", `${ress.length} protocolo(s) com ressalva: ${ress.map(x => x.ressalva.toLowerCase()).join(", ")}.`]);
   if (cons.length) { const best = [...cons].sort((a, b) => b[2] / b[1] - a[2] / a[1])[0]; al.push(["good", `${best[0]} protocolou ${P(best[2] / best[1], 0)} do que assinou.`]); }
-  $("content").innerHTML += `<div class="sec">${kpis([["Contratos assinados", c.length, "No mês"], ["Protocolados", prot.length, P(prot.length / c.length, 0) + " dos contratos"], ["Parados", par.length, "Sem protocolo"], ["Honorários previstos", R0(sum(prot, h)), `Se ${P(ex, 0)} forem aprovados`], ["Previsto parado", R0(sum(par, h)), "Dos contratos sem protocolo"]])}</div>
+  $("content").innerHTML += `<div class="sec">${kpis([["Contratos assinados", c.length, "No mês"], ["Protocolados", prot.length, P(prot.length / c.length, 0) + " dos contratos"], ["Parados", par.length, "Sem protocolo"], ["Honorários previstos", R0(sum(prot, h)), `Se ${P(ex, 0)} forem aprovados`], ["Previsto parado", R0(sum(par, h)), "Dos contratos sem protocolo"], ["Custo colaborador", R0(equipePrev().total), `Fixo ${R0(equipePrev().fixo)} + prêmios ${R0(equipePrev().variavel)}`]])}</div>
   <div class="sec"><h2>Pontos de atenção</h2>${alerts(al)}</div>
-  <div class="sec"><h2>Consultores</h2><div class="panel"><div class="tbl-wrap"><table><thead><tr><th>Consultor</th><th>Protocolados</th><th class="n">Assinados</th><th class="n">Protocolados</th><th>Faixa de meta</th><th class="n">Prêmio</th><th class="n">Honorário previsto</th><th class="n">Previsto parado</th></tr></thead><tbody>${cons.map(([p, a, pr, e, pa]) => { const f = faixaPrev(pr); return `<tr><td>${esc(p)}</td><td><div class="prog"><span style="width:${pr / a * 100}%"></span></div></td><td class="n">${a}</td><td class="n">${pr} (${P(pr / a, 0)})</td><td>${f.min ? `<span class="pill good">${f.min}+ · R$ ${f.valor}/contrato</span>` : `<span class="pill warn">Abaixo de 10</span>`}</td><td class="n">${R0(f.premio)}</td><td class="n">${R0(e)}</td><td class="n">${R0(pa)}</td></tr>`; }).join("")}</tbody></table></div><p class="note">Meta individual: 10, 20 e 35 protocolos (R$ 30, R$ 40 e R$ 60 por contrato, valendo para todos os contratos da faixa). Honorário previsto: salário de benefício de ${R0(D.prem.salario_beneficio)}, atrasados de ${D.prem.meses_atrasados_aux} meses (Auxílio-Acidente) e ${D.prem.meses_atrasados_bpc} (BPC), ${P(ex, 0)} aprovados.</p></div></div>
+  <div class="sec"><h2>Consultores</h2><div class="panel"><div class="tbl-wrap"><table><thead><tr><th>Consultor</th><th>Protocolados</th><th class="n">Assinados</th><th class="n">Protocolados</th><th>Faixa de meta</th><th class="n">Prêmio</th><th class="n">Fixo</th><th class="n">Total a receber</th><th class="n">Honorário previsto</th><th class="n">Previsto parado</th></tr></thead><tbody>${cons.map(([p, a, pr, e, pa]) => { const f = faixaPrev(pr); return `<tr><td>${esc(p)}</td><td><div class="prog"><span style="width:${pr / a * 100}%"></span></div></td><td class="n">${a}</td><td class="n">${pr} (${P(pr / a, 0)})</td><td>${f.min ? `<span class="pill good">${f.min}+ · R$ ${f.valor}/contrato</span>` : `<span class="pill warn">Abaixo de 10</span>`}</td><td class="n">${R0(f.premio)}</td><td class="n">${R0(FIXO.prev)}</td><td class="n"><b>${R0(FIXO.prev + f.premio)}</b></td><td class="n">${R0(e)}</td><td class="n">${R0(pa)}</td></tr>`; }).join("")}</tbody></table></div><p class="note">Meta individual: 10, 20 e 35 protocolos (R$ 30, R$ 40 e R$ 60 por contrato, valendo para todos os contratos da faixa). Honorário previsto: salário de benefício de ${R0(D.prem.salario_beneficio)}, atrasados de ${D.prem.meses_atrasados_aux} meses (Auxílio-Acidente) e ${D.prem.meses_atrasados_bpc} (BPC), ${P(ex, 0)} aprovados.</p></div></div>
   <div class="sec"><div class="grid2">
     <div class="panel"><h3>Por que os contratos pararam</h3>${bars(mot)}</div>
     <div class="panel"><h3>Benefícios protocolados</h3>${bars(count(prot, x => x.beneficio))}</div>
@@ -288,23 +326,19 @@ function viewTrab() {
   const val = c.filter(validoTrab), pend = c.filter(x => !validoTrab(x)), n = c.length, nv = val.length, meta = metaSetor("trabalhista");
   const cp = D.campanhas.filter(x => x.area === "trabalhista"), inv = sum(cp, x => x.investimento);
   const LIM = meta || 15; // faixa de R$ 40 começa na meta do mês (setembro: 25; a partir de outubro: 15)
-  const cons = Object.entries(by(c, x => x.consultor)).map(([p, l]) => { const v = l.filter(validoTrab).length, valor = v >= LIM ? 40 : v >= 1 ? 30 : 0; return { p, tot: l.length, v, valor, premio: v * valor }; }).sort((a, b) => b.v - a.v);
-  // Bônus de R$ 100: primeiro consultor a atingir, sozinho, a meta do mês em contratos válidos (pela data de fechamento).
-  let top = null, topDia = null;
-  if (meta) Object.entries(by(val, x => x.consultor)).forEach(([p, l]) => { const ord = [...l].sort((a, b) => (a.data || '9999').localeCompare(b.data || '9999')); if (ord.length >= meta) { const d = ord[meta - 1].data || '9999'; if (!topDia || d < topDia) { top = p; topDia = d; } } });
-  const lider = cons[0] ? cons[0].p : null;
+  const TC = trabCalc(), cons = TC.cons, top = TC.top, topDia = TC.topDia, lider = cons[0] ? cons[0].p : null;
   const gat = (e, nome, det) => `<li class="g-${e}"><span class="g-n">${nome}</span><span class="g-s">${det}</span></li>`;
   const chip = (l, v) => `<span class="chip"><b>${v}</b> ${l}</span>`;
-  const card = x => { const bonus = x.p === top ? 100 : 0, pp = c.filter(y => y.consultor === x.p && !validoTrab(y)).length;
+  const card = x => { const bonus = x.bonus, pp = c.filter(y => y.consultor === x.p && !validoTrab(y)).length;
     const lista = [
       x.v >= 1 && x.v < LIM ? gat("ok", `Até ${LIM - 1} contratos · R$ 30 cada`, `Atingida · ${R0(x.v * 30)}`) : x.v >= LIM ? gat("lock", `Até ${LIM - 1} contratos · R$ 30 cada`, "Superada pela faixa de R$ 40") : gat("no", `Até ${LIM - 1} contratos · R$ 30 cada`, "Nenhum contrato válido"),
       x.v >= LIM ? gat("ok", `A partir de ${LIM} · R$ 40 cada`, `Atingida · ${R0(x.v * 40)}`) : gat("no", `A partir de ${LIM} · R$ 40 cada`, LIM - x.v === 1 ? "Falta 1 contrato válido" : `Faltam ${LIM - x.v} contratos válidos`),
       bonus ? gat("ok", `Primeiro a atingir a meta (${meta}) · R$ 100`, topDia && topDia !== "9999" ? `Conquistado no dia ${topDia.slice(8, 10)}` : "Conquistado") : gat(top ? "lock" : "no", `Primeiro a atingir a meta (${meta}) · R$ 100`, top ? `Indisponível · já ganho por ${top}` : (meta - x.v === 1 ? "Falta 1 contrato válido" : `Faltam ${Math.max(meta - x.v, 0)} contratos válidos`)),
       pp ? gat("no", "Contratos pendentes", `${pp} sem documentação ou cadastro`) : gat("ok", "Contratos pendentes", "Nenhum")
     ];
-    return `<div class="pcard"><div class="ph"><b>${esc(x.p)}</b><span><span class="muted">a receber</span> <b class="num">${R0(x.premio + bonus)}</b></span></div>
+    return `<div class="pcard"><div class="ph"><b>${esc(x.p)}</b><span><span class="muted">a receber</span> <b class="num">${R0(FIXO.trab + x.premio + bonus)}</b></span></div>
       <div class="prog" title="${x.v} de ${LIM}"><span style="width:${Math.min(x.v / LIM, 1) * 100}%"></span></div>
-      <ul class="gl">${lista.join("")}</ul>
+      <ul class="gl">${gat("ok", "Valor fixo · Consultor", R0(FIXO.trab))}${lista.join("")}</ul>
       <div class="chips">${chip("fechados", x.tot)}${chip("válidos", x.v)}${chip("viraram válidos", P(x.v / x.tot, 0))}${chip("do setor", P(x.v / nv, 0))}</div></div>`; };
   const sem = [["1 a 7", 1, 7], ["8 a 14", 8, 14], ["15 a 21", 15, 21], ["22 a 28", 22, 28], ["29 a 31", 29, 31]].map(([l, a, b]) => [l, c.filter(x => x.data && +x.data.slice(8, 10) >= a && +x.data.slice(8, 10) <= b).length]);
   sem.push(["Sem data", c.filter(x => !x.data).length]);
@@ -315,7 +349,7 @@ function viewTrab() {
   if (meta) al.push(top ? ["good", `${top} foi o primeiro a atingir sozinho a meta de ${meta} contratos válidos: bônus de R$ 100.`] : ["warn", `Ninguém atingiu sozinho a meta de ${meta} contratos válidos, então o bônus de R$ 100 não foi pago. ${lider} chegou mais perto, com ${cons[0].v}.`]);
   cons.filter(x => x.tot && !x.v).forEach(x => al.push(["warn", `${x.p} fechou ${x.tot} contrato(s), mas nenhum está válido ainda.`]));
   const pctRows = rows => rows.map(([k, v]) => [k, v, P(v / n, 0)]);
-  $("content").innerHTML += `<div class="sec">${kpis([["Contratos fechados", n, "No mês"], ["Contratos válidos", nv, P(nv / n, 0) + " dos fechados"], ["Pendentes", pend.length, "Sem documentação ou cadastro"], ["Meta do setor", meta ? `${nv}/${meta}` : "—", meta ? P(nv / meta, 0) + " da meta" : ""], ["Custo por contrato", R0(inv / nv), `Gasto de ${R0(inv)} ÷ válidos`]])}</div>
+  $("content").innerHTML += `<div class="sec">${kpis([["Contratos fechados", n, "No mês"], ["Contratos válidos", nv, P(nv / n, 0) + " dos fechados"], ["Pendentes", pend.length, "Sem documentação ou cadastro"], ["Meta do setor", meta ? `${nv}/${meta}` : "—", meta ? P(nv / meta, 0) + " da meta" : ""], ["Custo por contrato", R0(inv / nv), `Gasto de ${R0(inv)} ÷ válidos`], ["Custo colaborador", R0(equipeTrab().total), `Fixo ${R0(equipeTrab().fixo)} + prêmios ${R0(equipeTrab().variavel)}`]])}</div>
   <div class="sec"><h2>Pontos de atenção</h2>${alerts(al)}</div>
   <div class="sec"><h2>Time · metas individuais</h2><div class="panel"><h3>Consultores</h3><p class="sub">Por consultor, contando só contratos válidos: R$ 30 por contrato até ${LIM - 1}; a partir de ${LIM} (a meta do mês), R$ 40 por contrato, valendo para todos. O primeiro a atingir sozinho a meta do mês (${meta} contratos válidos) ganha R$ 100 a mais.</p><div class="pcards">${cons.map(card).join("")}</div></div></div>
   <div class="sec"><h2>Contratos</h2><div class="grid2">

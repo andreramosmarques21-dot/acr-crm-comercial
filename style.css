@@ -223,3 +223,10 @@ aside.side{position:relative;height:auto;overflow:visible;padding:0}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
 .chip{font-size:12px;color:var(--ink-2);background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:2px 9px}
 .chip b{color:var(--ink);font-family:var(--f-mono);font-weight:500}
+/* fluxo com até 8 etapas: 4 por linha no desktop */
+@media (min-width:1181px){
+  .flow{grid-template-columns:repeat(4,minmax(0,1fr));row-gap:30px}
+  .step:nth-child(4n)::after,.step:nth-child(4n)::before{display:none}
+  .step:nth-child(4n){padding-right:0}
+}
+.node.neg .v{color:var(--bad)}
