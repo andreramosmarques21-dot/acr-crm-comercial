@@ -123,16 +123,16 @@ function mktCons() {
   const camps = [...A.camps.map(c => [c[0] + " (cível)", c[1], "", c[3]]), ...B.camps.map(c => [c[0] + " (prev.)", c[1], "", c[3]])].sort((x, y) => (isFinite(x[1]) ? x[1] : 1e9) - (isFinite(y[1]) ? y[1] : 1e9));
   const total = a.contr + b.esp;
   return {
-    lead: "Esta aba soma o cível e o previdenciário, com todas as origens de cliente.",
+    lead: "Todos os setores reúne o investimento em anúncios e o resultado de todos os setores com dados no mês (hoje: cível e previdenciário), com todas as origens de cliente.",
     flow: [
       { k: "Gasto com anúncios", v: R0(inv), d: `Cível ${R0(a.inv)} + Previdenciário ${R0(b.inv)}`, m: [["Fatia do orçamento total", P(inv / sum(D.campanhas, c => c.investimento), 0)]], edge: "geram contatos" },
       { k: "Contatos recebidos", v: N(cont), d: `${N(a.cont)} do cível + ${N(b.cont)} do previdenciário`, m: [["Cada contato custou", X(inv / cont)]], edge: "equipe atende" },
       { k: "Clientes fechados", v: N(n), d: `${a.n} contratos do cível + ${b.n} protocolos do previdenciário`, m: [["Contatos para 1 cliente", N(cont / n)]], edge: "gasto ÷ clientes" },
-      { k: "Custo por cliente (CAC)", v: R0(inv / n), d: "Gasto total ÷ clientes das duas áreas", m: [["Cível", R0(a.inv / a.n)], ["Previdenciário", R0(b.inv / b.n)]], cac: true, edge: "valor dos contratos" },
+      { k: "Custo por cliente (CAC)", v: R0(inv / n), d: "Gasto total ÷ clientes de todos os setores", m: [["Cível", R0(a.inv / a.n)], ["Previdenciário", R0(b.inv / b.n)]], cac: true, edge: "valor dos contratos" },
       { k: "Quanto entra", v: R0(total), d: `${R0(a.rec)} já entraram; ${R0(total - a.rec)} vêm depois`, m: [["Já no caixa", R0(a.rec)]], edge: "menos o gasto" },
       { k: "Sobra depois dos anúncios", v: R0(total - inv), d: `${R0(a.rec - inv)} de caixa no mês`, m: [["Cada R$ 1 deve virar", X(total / inv)]], profit: true }
     ],
-    tree: { root: ["Custo por cliente", R0(inv / n), "média das duas áreas"], a: ["Cível", R0(a.inv / a.n), "por contrato"], a1: ["Gasto cível", R0(a.inv), ""], a2: ["Contratos", N(a.n), ""], b: ["Previdenciário", R0(b.inv / b.n), "por protocolo"], b1: ["Gasto previdenciário", R0(b.inv), ""], b2: ["Protocolos", N(b.n), ""], avg: true },
+    tree: { root: ["Custo por cliente", R0(inv / n), "média de todos os setores"], a: ["Cível", R0(a.inv / a.n), "por contrato"], a1: ["Gasto cível", R0(a.inv), ""], a2: ["Contratos", N(a.n), ""], b: ["Previdenciário", R0(b.inv / b.n), "por protocolo"], b1: ["Gasto previdenciário", R0(b.inv), ""], b2: ["Protocolos", N(b.n), ""], avg: true },
     formula: `Custo por cliente = gasto total ÷ total de clientes  →  ${R0(inv)} ÷ ${N(n)} = ${R2(inv / n)}`,
     caption: "A média pesa mais para a área que trouxe mais clientes.",
     camps, teto: 250, insight: ""
@@ -163,7 +163,7 @@ const vazio = () => `<div class="soon"><span class="pill warn" style="justify-se
 
 /* ---------- telas ---------- */
 function viewMkt(k) {
-  const names = { civel: "Cível", prev: "Previdenciário", cons: "Cível + Previdenciário" };
+  const names = { civel: "Cível", prev: "Previdenciário", cons: "Todos os setores" };
   $("content").innerHTML = head("Marketing no Comercial", "Do anúncio ao lucro", "Quanto custa conquistar cada cliente e quanto ele traz de volta. O custo por cliente (CAC) é o número principal.") +
     `<div class="subtabs">${Object.keys(names).map(n => `<a href="#mkt-${n}" ${n === k ? 'aria-current="page"' : ""}>${names[n]}</a>`).join("")}</div>
     <div class="glossary"><span><b>Custo por cliente (CAC):</b> quanto gastamos em anúncios para conseguir 1 cliente.</span><span><b>Contatos:</b> pessoas que chegaram pelo anúncio.</span><span><b>Valor a receber:</b> parcelas e honorários que ainda vão entrar.</span><span><b>Retorno:</b> quantos reais voltaram para cada R$ 1 gasto.</span></div><div id="view"></div>`;
@@ -189,7 +189,7 @@ function viewCivel() {
     const faixas = [...FAIXAS_CLOSER].reverse().map(([min, pct]) => v >= min ? gat("ok", `Faixa ${P(pct, 0)} · R$ ${N(min)}`, f.min === min ? `Atingida · ${R0(v * pct)}` : "Superada") : gat("no", `Faixa ${P(pct, 0)} · R$ ${N(min)}`, `Falta ${R0(min - v)}`));
     const bonus = [
       b1 ? gat("ok", `Primeiro a bater ${R0(REGRAS.metaCloser)}`, `Conquistado · ${R0(REGRAS.bonusPrimeiro)}`) : gat(primeiro ? "lock" : "no", `Primeiro a bater ${R0(REGRAS.metaCloser)}`, primeiro ? `Indisponível · já ganho por ${primeiro.p}` : `Falta ${R0(REGRAS.metaCloser - v)}`),
-      ehMaior && timeMeta ? gat("ok", "Maior faturamento do mês", `Conquistado · ${R0(REGRAS.bonusMaior)}`) : gat("lock", "Maior faturamento do mês", ehMaior ? "Indisponível · time não bateu a meta geral" : `Indisponível · líder: ${maior[0]}`)
+      ehMaior && timeMeta ? gat("ok", "Maior faturamento do mês", `Conquistado · ${R0(REGRAS.bonusMaior)}`) : gat("lock", "Maior faturamento do mês · R$ 500", ehMaior ? `Líder do mês, mas bloqueado: time em ${P(recTotal / metaSetor("civel"), 0)} da meta geral (faltam ${R0(metaSetor("civel") - recTotal)})` : `Indisponível · líder: ${maior[0]}`)
     ];
     const total = f.comissao + bonusCloser(p);
     return `<div class="pcard"><div class="ph"><b>${esc(p)}</b><span><span class="muted">a receber</span> <b class="num">${R0(total)}</b></span></div>
@@ -232,7 +232,7 @@ function viewCivel() {
     <div class="panel"><h3>Como pagou</h3>${bars(count(c, x => x.forma_pagamento))}</div>
     <div class="panel"><h3>Como fechou</h3>${bars(count(c, x => x.tipo_fechamento))}</div>
     <div class="panel"><h3>Região</h3>${bars(count(c, x => regiao(x.uf)))}</div>
-    <div class="panel"><h3>Estados</h3>${bars(count(c, x => x.uf))}</div></div></div>`;
+    <div class="panel"><h3>Estados</h3><p class="sub">Contratos e % do total do mês</p>${bars(count(c, x => x.uf).map(([k, v]) => [k, v, P(v / n, 0)]))}</div></div></div>`;
 }
 function viewPrev() {
   const c = D ? D.prev : [];

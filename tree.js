@@ -19,7 +19,7 @@ function treeSVG(t){
   let s=`<svg class="tree" viewBox="0 0 ${W} 370" role="img" aria-label="${esc(t.root[0])} de ${esc(t.root[1])} formado por ${esc(t.a[0])} e ${esc(t.b[0])}">`;
   // fios raiz → filhos
   s+=wire(W/2,rootY+rh,cx[0],childY)+wire(W/2,rootY+rh,cx[1],childY);
-  if(!isCons) s+=op(W/2,rootY+rh+(childY-rootY-rh)/2,"÷"); else s+=`<text class="ld" x="${W/2}" y="${rootY+rh+34}" text-anchor="middle">média das duas áreas</text>`;
+  if(!isCons) s+=op(W/2,rootY+rh+(childY-rootY-rh)/2,"÷"); else s+=`<text class="ld" x="${W/2}" y="${rootY+rh+34}" text-anchor="middle">média ponderada dos setores</text>`;
   // filhos → netos
   [["a",0],["b",1]].forEach(([k,i])=>{
     const n1=t[k+"1"], n2=t[k+"2"];
