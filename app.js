@@ -306,7 +306,7 @@ function viewCivel() {
   const semMidia = c.filter(x => !x.campanha_grupo).length;
   if (semMidia / n >= .4) al.push(["good", `${semMidia} de ${n} clientes vieram sem anúncio (orgânico, indicação e outros).`]);
   $("content").innerHTML += `<div class="sec">${kpis([["Contratos fechados", n, "No mês"], ["Valor contratado", R0(contr), "Soma dos contratos"], ["Já recebido", R0(rec), metaSetor("civel") ? `${P(rec / metaSetor("civel"), 0)} da meta de ${R0(metaSetor("civel"))}` : P(rec / contr, 0) + " do contratado"], ["A receber", R0(contr - rec), "Parcelas futuras"], ["Valor médio do contrato", R0(contr / n), "Recebido por contrato: " + R0(rec / n)], ["Custo colaborador", R0(equipeCivel().total), `Fixo ${R0(equipeCivel().fixo)} + comissões ${R0(equipeCivel().variavel)}`], ["Recebido − custo colaborador", R0(rec - equipeCivel().total), "O que sobra do recebido após pagar a equipe"]])}</div>
-  <div class="sec"><h2>Pontos de atenção</h2>${alerts(al)}</div>
+  <div class="sec atencao"><h2>Pontos de atenção</h2>${alerts(al)}</div>
   <div class="sec"><h2>Time · metas individuais</h2>
     <div class="panel"><h3>Closers</h3><p class="sub">Comissão sobre todo o valor recebido no mês (5% a partir de R$ 10 mil, 7% a partir de R$ 20 mil, 15% a partir de R$ 30 mil) e bônus extras.</p><div class="pcards">${closers.map(([p, l]) => cardCloser(p, l)).join("")}</div></div>
     <div class="panel"><h3>SDRs</h3><p class="sub">O SDR qualifica o lead e agenda com o Closer; conta o lead dele que virou contrato. Meta de ${REGRAS.metaSdr} no mês → 1% do recebido do time (abaixo, 0,5%), mais a diária de R$ 15.</p><div class="pcards">${sdrCalc.map(cardSdr).join("")}</div><p class="note">Contratos sem data não entram na diária. A data usada é a do fechamento do contrato.</p></div></div>
@@ -337,8 +337,8 @@ function viewPrev() {
   cons.filter(r => r[1] === 0).forEach(r => al.push(["warn", `${r[0]} ainda não tem contratos no mês.`]));
   const comProt = cons.filter(r => r[2] > 0);
   if (comProt.length) { const best = [...comProt].sort((a, b) => b[2] / b[1] - a[2] / a[1])[0]; al.push(["good", `${best[0]} protocolou ${P(best[2] / best[1], 0)} do que assinou.`]); }
-  $("content").innerHTML += `<div class="sec">${kpis([["Contratos assinados", c.length, proj.length ? `${proj.length} com data projetada` : "No mês"], ["Protocolados", prot.length, P(prot.length / c.length, 0) + " dos contratos"], ["Parados", par.length, "Sem protocolo"], ["Honorários previstos", R0(sum(prot, h)), `Se ${P(ex, 0)} forem aprovados`], ["Previsto parado", R0(sum(par, h)), "Dos contratos sem protocolo"], ["Custo colaborador", R0(equipePrev().total), `Fixo ${R0(equipePrev().fixo)} + prêmios ${R0(equipePrev().variavel)}`], ["Recebido − custo colaborador", R0(0 - equipePrev().total), "Nada recebido no mês: honorários entram em 6 a 24 meses"]])}</div>
-  <div class="sec"><h2>Pontos de atenção</h2>${alerts(al)}</div>
+  $("content").innerHTML += `<div class="sec">${kpis([["Contratos assinados", c.length, proj.length ? `${proj.length} com data projetada` : "No mês"], ["Protocolados", prot.length, P(prot.length / c.length, 0) + " dos contratos"], ["Parados", par.length, "Sem protocolo"], ["Honorários previstos", R0(sum(prot, h)), `Se ${P(ex, 0)} forem aprovados`], ["Previsto parado", R0(sum(par, h)), "Dos contratos sem protocolo"], ["Custo colaborador", R0(equipePrev().total), `Fixo ${R0(equipePrev().fixo)} + prêmios ${R0(equipePrev().variavel)}`]])}</div>
+  <div class="sec atencao"><h2>Pontos de atenção</h2>${alerts(al)}</div>
   <div class="sec"><h2>Consultores</h2><div class="panel"><div class="tbl-wrap"><table><thead><tr><th>Consultor</th><th>Protocolados</th><th class="n">Assinados</th><th class="n">Protocolados</th><th>Faixa de meta</th><th class="n">Prêmio</th><th class="n">Fixo</th><th class="n">Total a receber</th><th class="n">Honorário previsto</th><th class="n">Previsto parado</th></tr></thead><tbody>${cons.map(([p, a, pr, e, pa]) => { const f = faixaPrev(pr); return `<tr><td>${esc(p)}</td><td><div class="prog"><span style="width:${a ? pr / a * 100 : 0}%"></span></div></td><td class="n">${a}</td><td class="n">${a ? `${pr} (${P(pr / a, 0)})` : "—"}</td><td>${f.min ? `<span class="pill good">${f.min}+ · R$ ${f.valor}/contrato</span>` : `<span class="pill warn">Abaixo de 10</span>`}</td><td class="n">${R0(f.premio)}</td><td class="n">${R0(FIXO.prev)}</td><td class="n"><b>${R0(FIXO.prev + f.premio)}</b></td><td class="n">${R0(e)}</td><td class="n">${R0(pa)}</td></tr>`; }).join("")}</tbody></table></div><p class="note">Meta individual: 10, 20 e 35 protocolos (R$ 30, R$ 40 e R$ 60 por contrato, valendo para todos os contratos da faixa). Honorário previsto: salário de benefício de ${R0(D.prem.salario_beneficio)}, atrasados de ${D.prem.meses_atrasados_aux} meses (Auxílio-Acidente) e ${D.prem.meses_atrasados_bpc} (BPC), ${P(ex, 0)} aprovados.${semCalc.length ? " Pensão por Morte e Aposentadoria: aguardando cálculo." : ""}</p></div></div>
   <div class="sec"><div class="grid2">
     <div class="panel"><h3>Por que os contratos pararam</h3>${bars(mot)}</div>
@@ -377,7 +377,7 @@ function viewTrab() {
   cons.filter(x => x.tot && !x.v).forEach(x => al.push(["warn", `${x.p} fechou ${x.tot} contrato(s), mas nenhum está válido ainda.`]));
   const pctRows = rows => rows.map(([k, v]) => [k, v, P(v / n, 0)]);
   $("content").innerHTML += `<div class="sec">${kpis([["Contratos fechados", n, "No mês"], ["Contratos válidos", nv, P(nv / n, 0) + " dos fechados"], ["Pendentes", pend.length, "Sem documentação ou cadastro"], ["Meta do setor", meta ? `${nv}/${meta}` : "—", meta ? P(nv / meta, 0) + " da meta" : ""], semCampanhas() ? ["Custo por contrato", "Aguardando", "Números das campanhas chegam toda semana"] : ["Custo por contrato", R0(inv / nv), `Gasto de ${R0(inv)} ÷ válidos`], ["Custo colaborador", R0(equipeTrab().total), `Fixo ${R0(equipeTrab().fixo)} + prêmios ${R0(equipeTrab().variavel)}`]])}</div>
-  <div class="sec"><h2>Pontos de atenção</h2>${alerts(al)}</div>
+  <div class="sec atencao"><h2>Pontos de atenção</h2>${alerts(al)}</div>
   <div class="sec"><h2>Time · metas individuais</h2><div class="panel"><h3>Consultores</h3><p class="sub">Por consultor, contando só contratos válidos: R$ 30 por contrato até ${LIM - 1}; a partir de ${LIM} (a meta do mês), R$ 40 por contrato, valendo para todos. O primeiro a atingir sozinho a meta do mês (${meta} contratos válidos) ganha R$ 100 a mais.</p><div class="pcards">${cons.map(card).join("")}</div></div></div>
   <div class="sec"><h2>Contratos</h2><div class="grid2">
     <div class="panel"><h3>Tipo de ação</h3>${bars(pctRows(count(c, x => x.tipo_acao)))}</div>
@@ -402,7 +402,7 @@ const ROUTES = {
 function route() {
   let r = location.hash.slice(1); if (!ROUTES[r]) r = "mkt-civel";
   document.querySelectorAll(".nav a").forEach(a => a.dataset.r === r ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
-  try { ROUTES[r](); } catch (e) { $("content").innerHTML = `<p class="muted">Não foi possível montar esta tela. ${esc(e.message)}</p>`; }
+  try { ROUTES[r](); const at = document.querySelector("#content .atencao"); if (at) $("content").appendChild(at); } catch (e) { $("content").innerHTML = `<p class="muted">Não foi possível montar esta tela. ${esc(e.message)}</p>`; }
 }
 
 /* ---------- tema ---------- */
