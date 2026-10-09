@@ -26,10 +26,12 @@ async function carregar(mes) {
   MI = meses.find(m => m.id === MES) || {};
   if (!MES) { D = null; return; }
   const q = `mes_id=eq.${MES}`;
-  const [campanhas, civel, prev, metas, prem, trab] = await Promise.all([
-    api(`campanhas?${q}`), api(`contratos_civel?${q}`), api(`contratos_prev?${q}`), api(`metas?${q}`), api(`premissas_prev?${q}`), api(`contratos_trab?${q}`)
+  const [campanhas, civel, prev, metas, prem, trab, ativ, social, socialF] = await Promise.all([
+    api(`campanhas?${q}`), api(`contratos_civel?${q}`), api(`contratos_prev?${q}`), api(`metas?${q}`), api(`premissas_prev?${q}`), api(`contratos_trab?${q}`),
+    api(`atividade_diaria?${q}&order=data`).catch(() => []),
+    api(`leads_social?mes_id=lte.${MES}&order=data`).catch(() => []), api(`social_fechamentos?${q}`).catch(() => [])
   ]);
-  D = { campanhas, civel, prev, metas, trab, prem: prem[0] || { salario_beneficio: 2500, meses_atrasados_aux: 12, meses_atrasados_bpc: 6, parcelas_bit: 4, taxa_exito: 0.6, salario_minimo: 1621 } };
+  D = { campanhas, civel, prev, metas, trab, ativ, socialAll: social, social: social.filter(x => x.mes_id === MES), socialF, prem: prem[0] || { salario_beneficio: 2500, meses_atrasados_aux: 12, meses_atrasados_bpc: 6, parcelas_bit: 4, taxa_exito: 0.6, salario_minimo: 1621 } };
 }
 function honorario(ben, p) {
   const sb = +p.salario_beneficio, sm = +p.salario_minimo;
@@ -59,7 +61,13 @@ function primeiroNaMeta(c) { let melhor = null; Object.entries(by(c, x => x.clos
 const SEM_CUSTO = ["Orgânico", "Indicação", "TikTok"];
 
 /* ---------- Custo colaborador: valor fixo + comissões/premiações ---------- */
-const FIXO = { sdr: 2000, closer: 2400, prev: 2000, trab: 1800 };
+const FIXO = { sdr: 2000, closer: 2400, prev: 2000, trab: 1800, social: 900 };
+// Social Seller: conta o lead encaminhado que FECHOU contrato no mês. Até 4: R$ 30 por contrato; 5 a 15: R$ 50 por contrato;
+// 16 ou mais: a definir (calculado a R$ 50 até definir).
+const encaminhados = () => (D.socialF || []).length;
+const faixaSocial = (enc, contratos) => enc >= 16 ? { valor: 50, premio: contratos * 50, aDefinir: true } : enc >= 5 ? { valor: 50, premio: contratos * 50 } : { valor: 30, premio: contratos * 30 };
+const socialNome = () => { const m = (D.metas || []).find(x => x.area === "social" && x.pessoa !== "SETOR"); return m ? m.pessoa : null; };
+function equipeSocial(P_) { const nome = socialNome(); if (nome) P_[nome] = { p: nome, papeis: ["Social Seller"], fixo: FIXO.social, variavel: faixaSocial(encaminhados(), (D.socialF || []).length).premio }; }
 function equipeCivel() {
   const c = D.civel, rec = sum(c, x => x.valor_recebido), meta = metaSetor("civel"), timeMeta = meta ? rec >= meta : false, primeiro = primeiroNaMeta(c);
   const closers = Object.entries(by(c, x => x.closer)), sdrs = Object.entries(by(c.filter(x => x.sdr && !/pr[óo]prio/i.test(x.sdr)), x => x.sdr));
@@ -68,6 +76,7 @@ function equipeCivel() {
   sdrs.forEach(([p, l]) => { const o = get(p), bate = l.length >= REGRAS.metaSdr; o.papeis.push("SDR"); o.variavel += rec * (bate ? REGRAS.pctSdrMeta : REGRAS.pctSdrBase) + diariaSdr(l).pago; });
   closers.forEach(([p, l]) => { const o = get(p), v = sum(l, x => x.valor_recebido); o.papeis.push("Closer"); o.variavel += faixaCloser(v).comissao + (primeiro && primeiro.p === p ? REGRAS.bonusPrimeiro : 0) + (timeMeta && maior && maior[0] === p ? REGRAS.bonusMaior : 0); });
   Object.values(P_).forEach(o => o.fixo = o.papeis.includes("SDR") ? FIXO.sdr : FIXO.closer);
+  equipeSocial(P_);
   return fechaEquipe(P_);
 }
 // Equipe do previdenciário: quem tem contrato no mês + quem está cadastrado nas metas (ex.: consultora nova ainda sem contrato).
@@ -234,11 +243,117 @@ const selo = () => MI.parcial ? `<div class="mes-parcial"><span class="dot"></sp
 const head = (crumb, t, d) => `<div class="page-head"><span class="crumb">${crumb}</span><h1>${t}</h1><p>${d}</p></div>` + selo();
 const vazio = () => `<div class="soon"><span class="pill warn" style="justify-self:start">Sem dados</span><p>Ainda não há dados para este mês. Eles aparecem aqui assim que forem lançados.</p></div>`;
 
+const DOOR = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18"/><path d="M6 21V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v17"/><path d="M14 12h.01"/></svg>';
+/* ---------- Porta de entrada · Social Seller ---------- */
+const NO_CLOSER = x => /agendado|fechado/i.test(x.status || "");
+const FECHOU = x => /fechado/i.test(x.status || "");
+const FAIXAS_BLOQ = [["Até 7 dias", 0, 7], ["8 a 30 dias", 8, 30], ["31 a 90 dias", 31, 90], ["91 dias a 1 ano", 91, 365], ["Mais de 1 ano", 366, 1e9]];
+function semanaDe(d) { const t = new Date(d + "T12:00:00Z"), w = (t.getUTCDay() + 6) % 7; t.setUTCDate(t.getUTCDate() - w); return iso(t); }
+function viewSocial() {
+  const LM = D ? (D.social || []) : [], L = D ? (D.socialAll || []) : [], F = D ? (D.socialF || []) : [], nome = D ? (socialNome() || "Social Seller") : "Social Seller";
+  $("content").innerHTML = head("Marketing no Comercial · Porta de entrada", `<span class="door-ic">${DOOR}</span>Porta de entrada`, `${esc(nome)} (Social Seller) atende quem chega pelas redes, de forma orgânica ou reagindo aos criativos, e encaminha ao SDR. É o primeiro contato do cliente com o escritório.`) + subtabsMkt("social");
+  if (!LM.length && !F.length) { $("content").innerHTML += vazio(); return; }
+  const desde = dm_(L[0].data), nm = LM.length;
+  const n = L.length, comSdr = L.filter(x => x.sdr).length, ate = L.filter(NO_CLOSER).length, fech = L.filter(FECHOU).length, semSt = L.filter(x => !x.status).length;
+  const enc = encaminhados(), f = faixaSocial(enc, F.length), aReceber = FIXO.social + f.premio, crm = D.civel.filter(x => x.social_seller).length;
+  const pct = (a, b) => b ? P(a / b, 0) : "—";
+  const porOrigem = Object.entries(by(L, x => x.origem)).map(([o, l]) => [o, l.length, l.filter(NO_CLOSER).length, l.filter(FECHOU).length]).sort((a, b) => b[1] - a[1]);
+  const faixas = FAIXAS_BLOQ.map(([k, a, b]) => { const l = L.filter(x => x.dias_bloqueado != null && x.dias_bloqueado >= a && x.dias_bloqueado <= b); return [k, l.length, l.length ? `${l.filter(NO_CLOSER).length} ao closer` : ""]; });
+  const semInfo = L.filter(x => x.dias_bloqueado == null).length;
+  const semanas = Object.entries(by(L, x => semanaDe(x.data))).sort((a, b) => a[0].localeCompare(b[0])).map(([w, l]) => [`Semana de ${dm_(w)}`, l.length]);
+  const sdrRows = count(L, x => x.sdr || "Sem SDR"), stRows = count(L, x => x.status || "Sem status");
+  const gat = (e, nm, det) => `<li class="g-${e}"><span class="g-n">${nm}</span><span class="g-s">${det}</span></li>`;
+  const al = [];
+  if (n && (n - comSdr) / n >= .2) al.push(["bad", `${n - comSdr} de ${n} leads (${pct(n - comSdr, n)}) estão sem SDR definido: ninguém é dono do próximo passo.`]);
+  if (n && semSt / n >= .2) al.push(["warn", `${semSt} leads (${pct(semSt, n)}) estão sem status na planilha. Sem status, o funil não mostra onde o lead parou.`]);
+  const semData = L.filter(x => FECHOU(x) && !x.data_fechado).length;
+  if (semData) al.push(["warn", `${semData} contrato${semData === 1 ? "" : "s"} fechado${semData === 1 ? "" : "s"} sem data de fechamento na planilha do Social Seller.`]);
+  const dia = L.filter(x => x.diaria != null).length;
+  if (n && dia / n < .3) al.push(["warn", `A diária perdida está preenchida em só ${dia} de ${n} leads. É o argumento de urgência para o fechamento.`]);
+  if (porOrigem.length > 1) { const best = [...porOrigem].sort((a, b) => b[2] / b[1] - a[2] / a[1])[0]; al.push(["good", `${best[0]} leva ${pct(best[2], best[1])} dos leads até o closer, a melhor taxa entre as origens.`]); }
+  if (F.length !== crm) al.push(["warn", `Conferência: ${F.length} contrato${F.length === 1 ? "" : "s"} na planilha do Social Seller para este mês e ${crm} marcado${crm === 1 ? "" : "s"} como dele no Cível. O fechamento pode vir depois do encaminhamento (follow-up), então confira as datas.`]);
+  $("content").innerHTML += `<div class="sec">${kpis([["Leads iniciados", nm, "Conversas abertas no mês"], ["Com SDR definido", LM.filter(x => x.sdr).length, pct(LM.filter(x => x.sdr).length, nm) + " dos leads do mês"], ["Chegaram ao closer", LM.filter(NO_CLOSER).length, pct(LM.filter(NO_CLOSER).length, nm) + " dos leads do mês"], ["Contratos fechados", F.length, `encaminhados que fecharam · faixa de ${R0(f.valor)} por contrato`], ["A receber", R0(aReceber), `Fixo ${R0(FIXO.social)} + comissão ${R0(f.premio)}`]])}</div>
+  <div class="sec"><h2>Funil da porta de entrada</h2><p class="sub">Todos os leads desde ${desde}: o fechamento costuma vir dias depois do primeiro contato.</p><div class="panel">${funil([["Iniciados", n], ["Com SDR", comSdr], ["Chegaram ao closer", ate], ["Fechados", fech, "pela planilha do Social Seller"]])}</div></div>
+  <div class="sec"><h2>De onde vêm</h2><p class="sub">Desde ${desde}</p><div class="panel"><div class="tbl-wrap"><table><thead><tr><th>Origem</th><th class="n">Leads</th><th class="n">Chegaram ao closer</th><th class="n">Fechados</th><th class="n">Taxa até o closer</th></tr></thead><tbody>${porOrigem.map(([o, a, b, c]) => `<tr><td>${esc(o)}</td><td class="n">${a}</td><td class="n">${b}</td><td class="n">${c}</td><td class="n"><b>${pct(b, a)}</b></td></tr>`).join("")}</tbody></table></div><p class="note">Volume não é qualidade: compare a taxa até o closer de cada rede.</p></div></div>
+  <div class="sec"><h2>Quem é esse lead</h2><p class="sub">Desde ${desde}</p><div class="grid2">
+    <div class="panel"><h3>Aplicativo</h3>${bars(count(L, x => x.app || "Não informado"))}</div>
+    <div class="panel"><h3>Motivo do bloqueio</h3><p class="sub">Os 8 mais comuns</p>${bars(count(L.filter(x => x.motivo), x => x.motivo).slice(0, 8))}</div>
+    <div class="panel"><h3>Há quanto tempo está bloqueado</h3><p class="sub">Leads por faixa e quantos chegaram ao closer${semInfo ? ` · ${semInfo} sem a data do bloqueio` : ""}</p>${bars(faixas)}</div>
+    <div class="panel"><h3>Leads por semana</h3>${bars(semanas)}</div></div></div>
+  <div class="sec"><h2>Passagem para o time</h2><p class="sub">Situação atual de todos os leads desde ${desde}</p><div class="grid2">
+    <div class="panel"><h3>Para qual SDR foi</h3>${bars(sdrRows)}</div>
+    <div class="panel"><h3>Onde o lead está agora</h3>${bars(stRows)}</div></div></div>
+  <div class="sec"><h2>Remuneração</h2><div class="pcards"><div class="pcard"><div class="ph"><b>${esc(nome)}</b><span><span class="muted">a receber</span> <b class="num">${R0(aReceber)}</b></span></div>
+    <div class="prog" title="${enc} de 15 contratos"><span style="width:${Math.min(enc / 15, 1) * 100}%"></span></div>
+    <ul class="gl">${gat("ok", "Valor fixo · Social Seller", R0(FIXO.social))}${enc <= 4 ? gat("ok", "Até 4 contratos · R$ 30 cada", `Atual · ${F.length} × R$ 30 = ${R0(F.length * 30)}`) : gat("lock", "Até 4 contratos · R$ 30 cada", "Superada")}${enc >= 5 && enc <= 15 ? gat("ok", "5 a 15 contratos · R$ 50 cada", `Atual · ${F.length} × R$ 50 = ${R0(F.length * 50)}`) : enc > 15 ? gat("lock", "5 a 15 contratos · R$ 50 cada", "Superada") : gat("no", "5 a 15 contratos · R$ 50 cada", `Faltam ${5 - enc} contratos`)}${gat("lock", "16 ou mais contratos", enc >= 16 ? "Atingida · regra a definir (calculado a R$ 50)" : "Regra a definir")}</ul>
+    <div class="chips"><span class="chip"><b>${F.length}</b> contratos fechados</span><span class="chip"><b>${crm}</b> marcados no Cível</span></div></div></div>
+    <p class="note">Conta o lead que ele encaminhou e que fechou contrato. A faixa vale para todos os contratos do mês. O fechamento pode acontecer dias depois, por follow-up, e entra no mês em que é pago.</p></div>
+  <div class="sec atencao"><h2>Pontos de atenção</h2>${alerts(al)}</div>`;
+}
+
+/* ---------- ritmo do mês (relatório diário) ---------- */
+let RITMO_P = "mes";
+window.setRitmo = p => { RITMO_P = p; route(); };
+const iso = dt => dt.toISOString().slice(0, 10);
+function diasUteis() { // dias úteis do mês: total, já passados (até a data dos dados) e restantes
+  const [y, m] = MES.split("-").map(Number), fim = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const ref = MI.parcial && MI.dados_ate ? +MI.dados_ate.slice(8, 10) : fim;
+  let tot = 0, pass = 0;
+  for (let d = 1; d <= fim; d++) { const w = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); if (w && w < 6) { tot++; if (d <= ref) pass++; } }
+  return { tot, pass, rest: tot - pass };
+}
+function janela() { // período escolhido no botão Hoje / Semana / Mês
+  const datas = (D.ativ || []).map(x => x.data).sort(), ult = datas.at(-1);
+  if (RITMO_P === "hoje") return { de: ult, ate: ult, nome: `em ${dm_(ult)}` };
+  if (RITMO_P === "semana") { const d = new Date(ult + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() - 6); return { de: iso(d), ate: ult, nome: `de ${dm_(iso(d))} a ${dm_(ult)}` }; }
+  return { de: "0000", ate: "9999", nome: "no mês" };
+}
+const naJanela = (x, j) => x.data && x.data >= j.de && x.data <= j.ate;
+const botoesRitmo = () => `<div class="rbtn">${[["hoje", "Hoje"], ["semana", "Semana"], ["mes", "Mês"]].map(([k, l]) => `<button type="button" onclick="setRitmo('${k}')" ${RITMO_P === k ? 'aria-pressed="true"' : ""}>${l}</button>`).join("")}</div>`;
+function funil(etapas) { // [[nome, valor, nota?], ...]
+  const top = etapas[0][1] || 1;
+  return `<div class="funil">${etapas.map(([k, v, nota], i) => `${i ? `<div class="fpass"><b>${P(v / etapas[i - 1][1], 0)}</b><span>seguem</span></div>` : ""}<div class="fstep"><span class="fv">${N(v)}</span><span class="fk">${k}</span><div class="fbar"><span style="width:${Math.max(v / top * 100, 2)}%"></span></div>${nota ? `<span class="fn">${nota}</span>` : ""}</div>`).join("")}</div>`;
+}
+function ritmoCivel(c, al) {
+  const A = (D.ativ || []).filter(x => x.setor === "civel");
+  if (!A.length) return { html: "", porSdr: {} };
+  const j = janela(), du = diasUteis(), sdrA = A.filter(x => x.papel === "sdr"), cloA = A.filter(x => x.papel === "closer");
+  const sj = sdrA.filter(x => naJanela(x, j)), cj = c.filter(x => naJanela(x, j) || (RITMO_P === "mes"));
+  const lig = sum(sj, x => x.ligacoes), at = sum(sj, x => x.atendidas), ql = sum(sj, x => x.qualificadas);
+  const diasTime = [...new Set(sdrA.map(x => x.data))].sort();
+  // previsão do time (ritmo por dia útil)
+  const meta = metaSetor("civel"), rec = sum(c, x => x.valor_recebido), projN = c.length / du.pass * du.tot, projR = rec / du.pass * du.tot;
+  const tom = !meta ? "warn" : projR >= meta ? "good" : projR >= meta * .85 ? "warn" : "bad";
+  // por SDR
+  const sdrs = [...new Set(sdrA.map(x => x.pessoa))];
+  const linhas = sdrs.map(p => { const l = sdrA.filter(x => x.pessoa === p), q = sum(l, x => x.qualificadas), n = c.filter(x => x.sdr === p).length, qd = q / diasTime.length, conv = q ? n / q : 0; return { p, q, n, qd, conv, falta: Math.max(REGRAS.metaSdr - n, 0), semReg: l.filter(x => !x.registrado).map(x => dm_(x.data)), proj: n + qd * du.rest * conv }; });
+  const best = Math.max(...linhas.map(x => x.conv));
+  const porSdr = {};
+  linhas.forEach(x => { porSdr[x.p] = !du.rest ? null : !x.falta ? "Meta batida" : x.conv ? `${(x.falta / x.conv / du.rest).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} qualificações por dia` : "Nenhuma qualificação virou contrato ainda"; });
+  const heat = (() => { const mx = Math.max(...sdrA.map(x => x.qualificadas || 0), 1);
+    return `<div class="tbl-wrap"><table class="heat"><thead><tr><th>SDR</th>${diasTime.map(d => `<th class="n">${dm_(d)}</th>`).join("")}<th class="n">Total</th></tr></thead><tbody>${sdrs.map(p => `<tr><td>${esc(p)}</td>${diasTime.map(d => { const r = sdrA.find(x => x.pessoa === p && x.data === d); return !r || !r.registrado ? `<td class="n nr" title="Sem relatório">—</td>` : `<td class="n" style="--h:${(r.qualificadas || 0) / mx}" title="${r.ligacoes} ligações · ${r.atendidas} atendidas · ${r.qualificadas} qualificadas">${r.qualificadas}</td>`; }).join("")}<td class="n"><b>${sum(sdrA.filter(x => x.pessoa === p), x => x.qualificadas)}</b></td></tr>`).join("")}</tbody></table></div>`; })();
+  const prev = `<div class="tbl-wrap"><table><thead><tr><th>SDR</th><th class="n">Qualificações por dia</th><th class="n">Viram contrato</th><th class="n">Contratos</th><th>Previsão no fim do mês</th><th>Para bater ${REGRAS.metaSdr}</th><th>Onde ganhar</th></tr></thead><tbody>${linhas.sort((a, b) => b.proj - a.proj).map(x => { const t = x.proj >= REGRAS.metaSdr ? "good" : x.proj >= REGRAS.metaSdr * .8 ? "warn" : "bad"; const ganho = x.qd * du.rest * (best - x.conv);
+    return `<tr><td>${esc(x.p)}</td><td class="n">${x.qd.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}</td><td class="n">${P(x.conv, 0)}</td><td class="n">${x.n}</td><td><span class="pill ${t}">${du.rest ? "≈ " + Math.round(x.proj) : x.n} de ${REGRAS.metaSdr}</span></td><td>${porSdr[x.p] || "—"}</td><td>${x.conv >= best ? "Melhor conversão do time" : ganho >= .5 ? `+${Math.round(ganho)} contratos se chegar a ${P(best, 0)}` : "Aumentar volume de qualificações"}</td></tr>`; }).join("")}</tbody></table></div>`;
+  const clos = [...new Set(cloA.map(x => x.pessoa))].map(p => { const l = cloA.filter(x => x.pessoa === p), r = sum(l, x => x.reunioes), f = sum(l, x => x.fechamentos); return `<div class="kpi"><span class="l">${esc(p)}</span><span class="v">${P(f / r, 0)}</span><span class="s">${f} fechamento${f === 1 ? "" : "s"} em ${r} reuniões · ${l.length} dia${l.length === 1 ? "" : "s"} com relatório</span></div>`; }).join("");
+  // conferências e avisos
+  cloA.filter(x => x.fechamentos != null).forEach(x => { const real = c.filter(y => y.closer === x.pessoa && y.data === x.data).length; if (real !== x.fechamentos) al.push(["warn", `Relatório × planilha: ${x.pessoa} informou ${x.fechamentos} fechamento${x.fechamentos === 1 ? "" : "s"} em ${dm_(x.data)}, a planilha tem ${real}.`]); });
+  linhas.filter(x => x.semReg.length).forEach(x => al.push(["warn", `${x.p} ficou sem relatório diário em ${x.semReg.length > 1 ? x.semReg.slice(0, -1).join(", ") + " e " + x.semReg.at(-1) : x.semReg[0]}.`]));
+  const html = `<div class="sec ritmo"><div class="rhead"><h2>Ritmo do mês</h2>${botoesRitmo()}</div><p class="sub">Relatório diário da equipe ${j.nome}. Dias úteis: ${du.pass} de ${du.tot}${du.rest ? `, faltam ${du.rest}` : ""}.</p>
+    <div class="panel"><h3>Funil do time</h3>${funil([["Ligações", lig], ["Atendidas", at], ["Qualificadas", ql], ["Contratos", cj.length, "pela planilha dos closers"]])}
+      ${du.rest ? `<div class="previsao ${tom}"><span class="pill ${tom}">Previsão</span><span>No ritmo atual, o time termina com <b>≈ ${Math.round(projN)} contratos</b> e <b>${R0(projR)} recebidos</b>${meta ? ` (${P(projR / meta, 0)} da meta de ${R0(meta)})` : ""}.</span></div>` : ""}</div>
+    <div class="grid2"><div class="panel"><h3>Qualificações por dia</h3><p class="sub">Quanto mais forte a cor, mais qualificações. “—” = dia sem relatório.</p>${heat}</div>
+      <div class="panel"><h3>Closers · reunião que vira contrato</h3><p class="sub">Pelo relatório diário dos closers.</p><div class="kpis">${clos || '<p class="muted">Sem relatório dos closers.</p>'}</div></div></div>
+    <div class="panel"><h3>Previsão e caminho para a meta</h3><p class="sub">Ritmo de cada SDR por dia útil e quanto da qualificação vira contrato. “Onde ganhar” compara com a melhor taxa do time.</p>${prev}</div></div>`;
+  return { html, porSdr };
+}
+
 /* ---------- telas ---------- */
+const subtabsMkt = k => { const names = { social: "Porta de entrada", civel: "Cível", prev: "Previdenciário", trab: "Trabalhista", cons: "Todos os setores" };
+  return `<div class="subtabs">${Object.keys(names).map(n => `<a href="#mkt-${n}" class="${n === "social" ? "st-porta" : ""}" ${n === k ? 'aria-current="page"' : ""}>${n === "social" ? `<span class="door-ic">${DOOR}</span>` : ""}${names[n]}</a>`).join("")}</div>`; };
 function viewMkt(k) {
   const names = { civel: "Cível", prev: "Previdenciário", trab: "Trabalhista", cons: "Todos os setores" };
   $("content").innerHTML = head("Marketing no Comercial", "Do anúncio ao lucro", "Quanto custa conquistar cada cliente e quanto ele traz de volta. O custo por cliente (CAC) é o número principal.") +
-    `<div class="subtabs">${Object.keys(names).map(n => `<a href="#mkt-${n}" ${n === k ? 'aria-current="page"' : ""}>${names[n]}</a>`).join("")}</div>
+    subtabsMkt(k) + `
     <div class="glossary"><span><b>Custo por cliente (CAC):</b> quanto gastamos em anúncios para conseguir 1 cliente.</span><span><b>Contatos:</b> pessoas que chegaram pelo anúncio.</span><span><b>Valor a receber:</b> parcelas e honorários que ainda vão entrar.</span><span><b>Retorno:</b> quantos reais voltaram para cada R$ 1 gasto.</span></div><div id="view"></div>`;
   if (!D) { $("view").innerHTML = vazio(); return; }
   const tem = { civel: D.civel.length, prev: D.prev.length, trab: D.trab.length, cons: D.civel.length + D.prev.length + D.trab.length }[k];
@@ -266,6 +381,7 @@ function viewCivel() {
   const bonusCloser = p => (primeiro && primeiro.p === p ? REGRAS.bonusPrimeiro : 0) + (timeMeta && maior && maior[0] === p ? REGRAS.bonusMaior : 0);
   const sdrCalc = sdrs.map(([p, l]) => { const bate = l.length >= REGRAS.metaSdr, pct = bate ? REGRAS.pctSdrMeta : REGRAS.pctSdrBase, d = diariaSdr(l); return { p, n: l.length, bate, pct, meta: recTime * pct, diaria: d.pago, dias: d.dias }; });
   const recTotal = rec;
+  const al = [], RIT = ritmoCivel(c, al);
   const gat = (estado, nome, det) => `<li class="g-${estado}"><span class="g-n">${nome}</span><span class="g-s">${det}</span></li>`;
   const chip = (l, v) => `<span class="chip"><b>${v}</b> ${l}</span>`;
   function cardCloser(p, l) {
@@ -287,6 +403,7 @@ function viewCivel() {
       x.bate ? gat("ok", `Meta de ${REGRAS.metaSdr} qualificações · 1%`, `Atingida · ${R2(recTotal * REGRAS.pctSdrMeta)}`) : gat("no", `Meta de ${REGRAS.metaSdr} qualificações · 1%`, `Falta ${REGRAS.metaSdr - x.n} · valeria ${R2(recTotal * REGRAS.pctSdrMeta)}`),
       x.bate ? gat("lock", "Base 0,5%", "Substituída pela meta de 1%") : gat("ok", "Base 0,5%", `Garantida · ${R2(recTotal * REGRAS.pctSdrBase)}`),
       gat(x.diaria > 0 ? "ok" : "no", "Diária R$ 15 por dia", x.diaria > 0 ? `${R0(x.diaria)} · ${x.dias} dias com contrato` : "Nenhum dia com contrato"),
+      ...(RIT.porSdr[x.p] ? [gat(RIT.porSdr[x.p] === "Meta batida" ? "ok" : "no", "Ritmo para a meta", RIT.porSdr[x.p])] : []),
       gat(x.diaria < dm * REGRAS.diariaSdr ? "no" : "ok", "Diária cheia do mês", x.diaria < dm * REGRAS.diariaSdr ? `Perdeu ${R0(dm * REGRAS.diariaSdr - x.diaria)} acumulados` : "Completa")
     ];
     const imed = l.filter(y => /imediato/i.test(y.tipo_fechamento || "")).length;
@@ -297,7 +414,7 @@ function viewCivel() {
   }
   const sem = [["1 a 7", 1, 7], ["8 a 14", 8, 14], ["15 a 21", 15, 21], ["22 a 28", 22, 28], ["29 a 31", 29, 31]].map(([l, a, b]) => [l, c.filter(x => x.data && +x.data.slice(8, 10) >= a && +x.data.slice(8, 10) <= b).length]);
   sem.push(["Sem data", c.filter(x => !x.data).length]);
-  const al = [], fim = sem[3][1] + sem[4][1], datados = n - sem[5][1];
+  const fim = sem[3][1] + sem[4][1], datados = n - sem[5][1];
   if (!MI.parcial && datados && fim / datados < .2) al.push(["bad", `Só ${fim} contratos depois do dia 21. Vale entender se faltou contato, agenda ou registro.`]);
   closers.forEach(([p, l]) => { const v = sum(l, x => x.valor_recebido), f = faixaCloser(v); if (f.pct) al.push(["good", `${p} acumulou ${R0(v)} e está na faixa de ${P(f.pct, 0)} (comissão de ${R0(f.comissao)}).`]); else if (v >= 5000) al.push(["warn", `${p} acumulou ${R0(v)}: faltam ${R0(10000 - v)} para a primeira faixa de comissão (5%).`]); });
   if (primeiro) al.push(["good", `${primeiro.p} foi o primeiro a bater a meta individual de ${R0(REGRAS.metaCloser)} (dia ${primeiro.data.slice(8, 10)}): bônus de ${R0(REGRAS.bonusPrimeiro)}.`]);
@@ -310,9 +427,10 @@ function viewCivel() {
   <div class="sec"><h2>Time · metas individuais</h2>
     <div class="panel"><h3>Closers</h3><p class="sub">Comissão sobre todo o valor recebido no mês (5% a partir de R$ 10 mil, 7% a partir de R$ 20 mil, 15% a partir de R$ 30 mil) e bônus extras.</p><div class="pcards">${closers.map(([p, l]) => cardCloser(p, l)).join("")}</div></div>
     <div class="panel"><h3>SDRs</h3><p class="sub">O SDR qualifica o lead e agenda com o Closer; conta o lead dele que virou contrato. Meta de ${REGRAS.metaSdr} no mês → 1% do recebido do time (abaixo, 0,5%), mais a diária de R$ 15.</p><div class="pcards">${sdrCalc.map(cardSdr).join("")}</div><p class="note">Contratos sem data não entram na diária. A data usada é a do fechamento do contrato.</p></div></div>
+  ${RIT.html}
   <div class="sec"><h2>Clientes</h2><div class="grid2">
     <div class="panel"><h3>De onde veio o cliente</h3>${bars(count(c, x => x.canal))}</div>
-    <div class="panel"><h3>Ritmo do mês</h3><p class="sub">Contratos por semana</p>${bars(sem)}</div>
+    <div class="panel"><h3>Contratos por semana</h3>${bars(sem)}</div>
     <div class="panel"><h3>Como pagou</h3>${bars(count(c, x => x.forma_pagamento))}</div>
     <div class="panel"><h3>Como fechou</h3>${bars(count(c, x => x.tipo_fechamento))}</div>
     <div class="panel"><h3>Região</h3>${bars(count(c, x => regiao(x.uf)))}</div>
@@ -394,7 +512,7 @@ function viewSoon(nome, area, falta, ind) {
     `<div class="soon"><span class="pill warn" style="justify-self:start">Em construção</span>${sabe ? `<div><h3>O que já sabemos</h3><ul>${sabe.map(x => `<li>${x}</li>`).join("")}</ul></div>` : ""}<div><h3>O que falta</h3><ul>${falta.map(x => `<li>${x}</li>`).join("")}</ul></div><div><h3>Indicadores previstos</h3><ul>${ind.map(x => `<li>${x}</li>`).join("")}</ul></div></div>`;
 }
 const ROUTES = {
-  "mkt-civel": () => viewMkt("civel"), "mkt-prev": () => viewMkt("prev"), "mkt-trab": () => viewMkt("trab"), "mkt-cons": () => viewMkt("cons"),
+  "mkt-social": viewSocial, "mkt-civel": () => viewMkt("civel"), "mkt-prev": () => viewMkt("prev"), "mkt-trab": () => viewMkt("trab"), "mkt-cons": () => viewMkt("cons"),
   "setor-civel": viewCivel, "setor-prev": viewPrev,
   "setor-trab": viewTrab,
   "setor-cs": () => viewSoon("CS", "cs", ["Definir as regras do setor.", "Base de clientes ativos e pagamentos."], ["Clientes pagando em dia", "Benefícios aprovados e negados", "Indicações geradas", "Tempo até o primeiro retorno"])

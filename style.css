@@ -241,3 +241,36 @@ aside.side{position:relative;height:auto;overflow:visible;padding:0}
 .node.wait{background:var(--line-2);border-style:dashed}
 .node.wait .v{color:var(--muted);font-size:20px}
 @media (max-width:600px){.mes-parcial{border-radius:12px}}
+/* Ritmo do mês */
+.rhead{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.rbtn{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--surface)}
+.rbtn button{font:inherit;font-size:13px;padding:6px 14px;border:0;background:none;color:var(--ink-2);cursor:pointer}
+.rbtn button[aria-pressed="true"]{background:var(--accent);color:var(--surface)}
+.funil{display:flex;align-items:stretch;gap:8px;flex-wrap:wrap;margin-top:6px}
+.fstep{flex:1 1 150px;min-width:130px;background:var(--line-2);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:4px}
+.fstep .fv{font-size:clamp(26px,3vw,40px);font-weight:700;color:var(--ink);line-height:1.05}
+.fstep .fk{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.fstep .fn{font-size:11.5px;color:var(--muted)}
+.fbar{height:6px;border-radius:3px;background:var(--line);margin-top:6px;overflow:hidden}
+.fbar span{display:block;height:100%;background:var(--accent)}
+.fpass{display:flex;flex-direction:column;justify-content:center;align-items:center;min-width:56px;color:var(--muted);font-size:11px}
+.fpass b{font-size:18px;color:var(--accent)}
+.previsao{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px;padding:10px 14px;border-radius:10px;background:var(--line-2);font-size:14px;color:var(--ink-2)}
+.previsao b{color:var(--ink)}
+table.heat td[style]{background:color-mix(in srgb,var(--accent) calc(var(--h) * 70%),transparent);font-weight:600}
+table.heat td.nr{color:var(--warn);background:var(--warn-bg)}
+.ritmo .grid2 .kpis{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+@media (max-width:700px){.fpass{min-width:100%;flex-direction:row;gap:6px}}
+/* Porta de entrada (Social Seller): cor própria verde-azulada */
+:root{--door:#0f766e;--door-bg:#ddf3ef}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--door:#5fd3c3;--door-bg:#123430}}
+:root[data-theme="dark"]{--door:#5fd3c3;--door-bg:#123430}
+.nav a.porta{background:var(--door-bg);color:var(--door);font-weight:600;border-left:3px solid var(--door);margin-bottom:4px}
+.nav a.porta:hover{background:var(--door-bg);color:var(--door);filter:brightness(.97)}
+.nav a.porta[aria-current="page"]{background:var(--door);color:var(--surface)}
+.nav a.porta .pl{display:inline-flex;align-items:center;gap:8px}
+.subtabs a.st-porta{display:inline-flex;align-items:center;gap:6px;border-color:var(--door);color:var(--door);background:var(--door-bg)}
+.subtabs a.st-porta[aria-current="page"]{background:var(--door);border-color:var(--door);color:var(--surface)}
+.door-ic{display:inline-flex;vertical-align:middle;color:var(--door)}
+h1 .door-ic{margin-right:10px}h1 .door-ic svg{width:.8em;height:.8em}
+.subtabs a.st-porta[aria-current="page"] .door-ic{color:var(--surface)}
