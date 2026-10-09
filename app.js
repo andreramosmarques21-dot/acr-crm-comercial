@@ -70,8 +70,12 @@ function equipeCivel() {
   Object.values(P_).forEach(o => o.fixo = o.papeis.includes("SDR") ? FIXO.sdr : FIXO.closer);
   return fechaEquipe(P_);
 }
+// Equipe do previdenciário: quem tem contrato no mês + quem está cadastrado nas metas (ex.: consultora nova ainda sem contrato).
+const equipeListaPrev = () => D.metas.filter(m => m.area === "previdenciario" && m.pessoa !== "SETOR").map(m => m.pessoa);
+const AGUARDA_CALCULO = /pens|aposent/i; // benefícios ainda sem regra de honorário
 function equipePrev() {
-  const P_ = {}; Object.entries(by(D.prev, x => x.consultor)).forEach(([p, l]) => { P_[p] = { p, papeis: ["Consultor"], fixo: FIXO.prev, variavel: faixaPrev(l.filter(x => x.protocolado === "sim").length).premio }; });
+  const P_ = {}; equipeListaPrev().forEach(p => { P_[p] = { p, papeis: ["Consultor"], fixo: FIXO.prev, variavel: 0 }; });
+  Object.entries(by(D.prev, x => x.consultor)).forEach(([p, l]) => { P_[p] = { p, papeis: ["Consultor"], fixo: FIXO.prev, variavel: faixaPrev(l.filter(x => x.protocolado === "sim").length).premio }; });
   return fechaEquipe(P_);
 }
 function trabCalc() {
@@ -321,15 +325,21 @@ function viewPrev() {
   const ex = +D.prem.taxa_exito, h = x => honorario(x.beneficio, D.prem) * ex;
   const prot = c.filter(x => x.protocolado === "sim"), par = c.filter(x => x.protocolado !== "sim");
   const cons = Object.entries(by(c, x => x.consultor)).map(([p, l]) => { const pr = l.filter(x => x.protocolado === "sim"); return [p, l.length, pr.length, sum(pr, h), sum(l.filter(x => x.protocolado !== "sim"), h), l.filter(x => x.protocolado === "em_branco").length]; }).sort((a, b) => b[2] - a[2]);
+  equipeListaPrev().filter(p => !cons.some(r => r[0] === p)).forEach(p => cons.push([p, 0, 0, 0, 0, 0]));
+  const proj = c.filter(x => x.projecao), semCalc = c.filter(x => AGUARDA_CALCULO.test(x.beneficio || ""));
   const mot = count(par, x => x.motivo_parada), ress = prot.filter(x => x.ressalva);
   const al = [];
-  if (mot.length) al.push(["bad", `${mot[0][1]} contratos parados por: ${mot[0][0].toLowerCase()}. É o maior gargalo do setor.`]);
+  if (mot.length) al.push(["bad", `${mot[0][1]} contrato${mot[0][1] === 1 ? "" : "s"} parado${mot[0][1] === 1 ? "" : "s"} por: ${mot[0][0].toLowerCase()}. É o maior gargalo do setor.`]);
   cons.filter(r => r[5] >= 5).forEach(r => al.push(["warn", `${r[0]} tem ${r[5]} contratos sem a coluna de protocolo preenchida. Confirmar antes de avaliar o desempenho.`]));
   if (ress.length) al.push(["warn", `${ress.length} protocolo(s) com ressalva: ${ress.map(x => x.ressalva.toLowerCase()).join(", ")}.`]);
-  if (cons.length) { const best = [...cons].sort((a, b) => b[2] / b[1] - a[2] / a[1])[0]; al.push(["good", `${best[0]} protocolou ${P(best[2] / best[1], 0)} do que assinou.`]); }
-  $("content").innerHTML += `<div class="sec">${kpis([["Contratos assinados", c.length, "No mês"], ["Protocolados", prot.length, P(prot.length / c.length, 0) + " dos contratos"], ["Parados", par.length, "Sem protocolo"], ["Honorários previstos", R0(sum(prot, h)), `Se ${P(ex, 0)} forem aprovados`], ["Previsto parado", R0(sum(par, h)), "Dos contratos sem protocolo"], ["Custo colaborador", R0(equipePrev().total), `Fixo ${R0(equipePrev().fixo)} + prêmios ${R0(equipePrev().variavel)}`], ["Recebido − custo colaborador", R0(0 - equipePrev().total), "Nada recebido no mês: honorários entram em 6 a 24 meses"]])}</div>
+  if (proj.length) al.push(["warn", `${proj.length} contrato${proj.length === 1 ? "" : "s"} com data futura (${[...new Set(proj.map(x => dm_(x.data)))].join(", ")}): é projeção e só se confirma na próxima atualização da planilha.`]);
+  if (semCalc.length) al.push(["warn", `${semCalc.length} contrato${semCalc.length === 1 ? "" : "s"} de ${[...new Set(semCalc.map(x => x.beneficio))].join(" e ")}: honorário aguarda cálculo (regra ainda não definida).`]);
+  cons.filter(r => r[1] === 0).forEach(r => al.push(["warn", `${r[0]} ainda não tem contratos no mês.`]));
+  const comProt = cons.filter(r => r[2] > 0);
+  if (comProt.length) { const best = [...comProt].sort((a, b) => b[2] / b[1] - a[2] / a[1])[0]; al.push(["good", `${best[0]} protocolou ${P(best[2] / best[1], 0)} do que assinou.`]); }
+  $("content").innerHTML += `<div class="sec">${kpis([["Contratos assinados", c.length, proj.length ? `${proj.length} com data projetada` : "No mês"], ["Protocolados", prot.length, P(prot.length / c.length, 0) + " dos contratos"], ["Parados", par.length, "Sem protocolo"], ["Honorários previstos", R0(sum(prot, h)), `Se ${P(ex, 0)} forem aprovados`], ["Previsto parado", R0(sum(par, h)), "Dos contratos sem protocolo"], ["Custo colaborador", R0(equipePrev().total), `Fixo ${R0(equipePrev().fixo)} + prêmios ${R0(equipePrev().variavel)}`], ["Recebido − custo colaborador", R0(0 - equipePrev().total), "Nada recebido no mês: honorários entram em 6 a 24 meses"]])}</div>
   <div class="sec"><h2>Pontos de atenção</h2>${alerts(al)}</div>
-  <div class="sec"><h2>Consultores</h2><div class="panel"><div class="tbl-wrap"><table><thead><tr><th>Consultor</th><th>Protocolados</th><th class="n">Assinados</th><th class="n">Protocolados</th><th>Faixa de meta</th><th class="n">Prêmio</th><th class="n">Fixo</th><th class="n">Total a receber</th><th class="n">Honorário previsto</th><th class="n">Previsto parado</th></tr></thead><tbody>${cons.map(([p, a, pr, e, pa]) => { const f = faixaPrev(pr); return `<tr><td>${esc(p)}</td><td><div class="prog"><span style="width:${pr / a * 100}%"></span></div></td><td class="n">${a}</td><td class="n">${pr} (${P(pr / a, 0)})</td><td>${f.min ? `<span class="pill good">${f.min}+ · R$ ${f.valor}/contrato</span>` : `<span class="pill warn">Abaixo de 10</span>`}</td><td class="n">${R0(f.premio)}</td><td class="n">${R0(FIXO.prev)}</td><td class="n"><b>${R0(FIXO.prev + f.premio)}</b></td><td class="n">${R0(e)}</td><td class="n">${R0(pa)}</td></tr>`; }).join("")}</tbody></table></div><p class="note">Meta individual: 10, 20 e 35 protocolos (R$ 30, R$ 40 e R$ 60 por contrato, valendo para todos os contratos da faixa). Honorário previsto: salário de benefício de ${R0(D.prem.salario_beneficio)}, atrasados de ${D.prem.meses_atrasados_aux} meses (Auxílio-Acidente) e ${D.prem.meses_atrasados_bpc} (BPC), ${P(ex, 0)} aprovados.</p></div></div>
+  <div class="sec"><h2>Consultores</h2><div class="panel"><div class="tbl-wrap"><table><thead><tr><th>Consultor</th><th>Protocolados</th><th class="n">Assinados</th><th class="n">Protocolados</th><th>Faixa de meta</th><th class="n">Prêmio</th><th class="n">Fixo</th><th class="n">Total a receber</th><th class="n">Honorário previsto</th><th class="n">Previsto parado</th></tr></thead><tbody>${cons.map(([p, a, pr, e, pa]) => { const f = faixaPrev(pr); return `<tr><td>${esc(p)}</td><td><div class="prog"><span style="width:${a ? pr / a * 100 : 0}%"></span></div></td><td class="n">${a}</td><td class="n">${a ? `${pr} (${P(pr / a, 0)})` : "—"}</td><td>${f.min ? `<span class="pill good">${f.min}+ · R$ ${f.valor}/contrato</span>` : `<span class="pill warn">Abaixo de 10</span>`}</td><td class="n">${R0(f.premio)}</td><td class="n">${R0(FIXO.prev)}</td><td class="n"><b>${R0(FIXO.prev + f.premio)}</b></td><td class="n">${R0(e)}</td><td class="n">${R0(pa)}</td></tr>`; }).join("")}</tbody></table></div><p class="note">Meta individual: 10, 20 e 35 protocolos (R$ 30, R$ 40 e R$ 60 por contrato, valendo para todos os contratos da faixa). Honorário previsto: salário de benefício de ${R0(D.prem.salario_beneficio)}, atrasados de ${D.prem.meses_atrasados_aux} meses (Auxílio-Acidente) e ${D.prem.meses_atrasados_bpc} (BPC), ${P(ex, 0)} aprovados.${semCalc.length ? " Pensão por Morte e Aposentadoria: aguardando cálculo." : ""}</p></div></div>
   <div class="sec"><div class="grid2">
     <div class="panel"><h3>Por que os contratos pararam</h3>${bars(mot)}</div>
     <div class="panel"><h3>Benefícios protocolados</h3>${bars(count(prot, x => x.beneficio))}</div>
