@@ -274,3 +274,4 @@ table.heat td.nr{color:var(--warn);background:var(--warn-bg)}
 .door-ic{display:inline-flex;vertical-align:middle;color:var(--door)}
 h1 .door-ic{margin-right:10px}h1 .door-ic svg{width:.8em;height:.8em}
 .subtabs a.st-porta[aria-current="page"] .door-ic{color:var(--surface)}
+.aviso-camp.ok{border-left-color:var(--good)}
