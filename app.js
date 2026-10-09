@@ -276,6 +276,12 @@ function viewSocial() {
   if (porOrigem.length > 1) { const best = [...porOrigem].sort((a, b) => b[2] / b[1] - a[2] / a[1])[0]; al.push(["good", `${best[0]} leva ${pct(best[2], best[1])} dos leads até o closer, a melhor taxa entre as origens.`]); }
   if (F.length !== crm) al.push(["warn", `Conferência: ${F.length} contrato${F.length === 1 ? "" : "s"} na planilha do Social Seller para este mês e ${crm} marcado${crm === 1 ? "" : "s"} como dele no Cível. O fechamento pode vir depois do encaminhamento (follow-up), então confira as datas.`]);
   $("content").innerHTML += `<div class="sec">${kpis([["Leads iniciados", nm, "Conversas abertas no mês"], ["Com SDR definido", LM.filter(x => x.sdr).length, pct(LM.filter(x => x.sdr).length, nm) + " dos leads do mês"], ["Chegaram ao closer", LM.filter(NO_CLOSER).length, pct(LM.filter(NO_CLOSER).length, nm) + " dos leads do mês"], ["Contratos fechados", F.length, `encaminhados que fecharam · faixa de ${R0(f.valor)} por contrato`], ["A receber", R0(aReceber), `Fixo ${R0(fixoSocial())} + comissão ${R0(f.premio)}`]])}</div>
+  ${(() => { const R = (D.ativ || []).filter(x => x.setor === "social"); if (!R.length) return "";
+    const dias = [...new Set(R.map(x => x.data))].sort().reverse(), tot = k => sum(R, x => x[k]);
+    const linha = (d, l) => `<tr><td>${dm_(d)}</td><td>${esc(l.map(x => x.canal).join(" + "))}</td><td class="n">${sum(l, x => x.leads)}</td><td class="n">${sum(l, x => x.atendidas)}</td><td class="n">${sum(l, x => x.encaminhados)}</td><td class="n">${sum(l, x => x.fechamentos)}</td></tr>`;
+    const porCanal = Object.entries(by(R, x => x.canal)).map(([c, l]) => `<tr><td colspan="2">${esc(c)} · total</td><td class="n">${sum(l, x => x.leads)}</td><td class="n">${sum(l, x => x.atendidas)}</td><td class="n">${sum(l, x => x.encaminhados)}</td><td class="n">${sum(l, x => x.fechamentos)}</td></tr>`).join("");
+    const plan = L.filter(x => dias.includes(x.data)).length;
+    return `<div class="sec"><h2>Relatório diário</h2><p class="sub">Números informados pelo Social Seller a cada dia, por rede.</p><div class="panel"><div class="tbl-wrap"><table><thead><tr><th>Dia</th><th>Redes</th><th class="n">Leads recebidos</th><th class="n">Atendidos</th><th class="n">Encaminhados ao SDR/Closer</th><th class="n">Fecharam no dia</th></tr></thead><tbody>${dias.map(d => linha(d, R.filter(x => x.data === d))).join("")}${porCanal}<tr><td colspan="2"><b>Total</b></td><td class="n"><b>${tot("leads")}</b></td><td class="n"><b>${tot("atendidas")}</b></td><td class="n"><b>${tot("encaminhados")}</b></td><td class="n"><b>${tot("fechamentos")}</b></td></tr></tbody></table></div>${plan !== tot("leads") ? `<p class="note">A planilha de leads tem ${plan} lead${plan === 1 ? "" : "s"} registrado${plan === 1 ? "" : "s"} nesses dias, contra ${tot("leads")} no relatório diário. Os gráficos abaixo usam a planilha.</p>` : ""}</div></div>`; })()}
   <div class="sec"><h2>Funil da porta de entrada</h2><p class="sub">Todos os leads desde ${desde}: o fechamento costuma vir dias depois do primeiro contato.</p><div class="panel">${funil([["Iniciados", n], ["Com SDR", comSdr], ["Chegaram ao closer", ate], ["Fechados", fech, "pela planilha do Social Seller"]])}</div></div>
   <div class="sec"><h2>De onde vêm</h2><p class="sub">Desde ${desde}</p><div class="panel"><div class="tbl-wrap"><table><thead><tr><th>Origem</th><th class="n">Leads</th><th class="n">Chegaram ao closer</th><th class="n">Fechados</th><th class="n">Taxa até o closer</th></tr></thead><tbody>${porOrigem.map(([o, a, b, c]) => `<tr><td>${esc(o)}</td><td class="n">${a}</td><td class="n">${b}</td><td class="n">${c}</td><td class="n"><b>${pct(b, a)}</b></td></tr>`).join("")}</tbody></table></div><p class="note">Volume não é qualidade: compare a taxa até o closer de cada rede.</p></div></div>
   <div class="sec"><h2>Quem é esse lead</h2><p class="sub">Desde ${desde}</p><div class="grid2">
@@ -298,11 +304,13 @@ function viewSocial() {
 let RITMO_P = "mes";
 window.setRitmo = p => { RITMO_P = p; route(); };
 const iso = dt => dt.toISOString().slice(0, 10);
-function diasUteis() { // dias úteis do mês: total, já passados (até a data dos dados) e restantes
+// Feriados que não contam como dia útil (acrescentar aqui quando houver).
+const FERIADOS = ["2026-10-12"];
+function diasUteis() { // dias úteis do mês (sem sábado, domingo e feriados): total, já passados (até a data dos dados) e restantes
   const [y, m] = MES.split("-").map(Number), fim = new Date(Date.UTC(y, m, 0)).getUTCDate();
   const ref = MI.parcial && MI.dados_ate ? +MI.dados_ate.slice(8, 10) : fim;
   let tot = 0, pass = 0;
-  for (let d = 1; d <= fim; d++) { const w = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); if (w && w < 6) { tot++; if (d <= ref) pass++; } }
+  for (let d = 1; d <= fim; d++) { const w = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); if (w && w < 6 && !FERIADOS.includes(`${MES}-${String(d).padStart(2, "0")}`)) { tot++; if (d <= ref) pass++; } }
   return { tot, pass, rest: tot - pass };
 }
 function janela() { // período escolhido no botão Hoje / Semana / Mês
