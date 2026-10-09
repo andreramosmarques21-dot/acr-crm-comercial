@@ -405,8 +405,8 @@ function viewCivel() {
   function cardSdr(x) {
     const l = c.filter(y => y.sdr === x.p), recG = sum(l, y => y.valor_recebido), dm = diasDoMes();
     const lista = [
-      x.bate ? gat("ok", `Meta de ${REGRAS.metaSdr} qualificações · 1%`, `Atingida · ${R2(recTotal * REGRAS.pctSdrMeta)}`) : gat("no", `Meta de ${REGRAS.metaSdr} qualificações · 1%`, `Falta ${REGRAS.metaSdr - x.n} · valeria ${R2(recTotal * REGRAS.pctSdrMeta)}`),
-      x.bate ? gat("lock", "Base 0,5%", "Substituída pela meta de 1%") : gat("ok", "Base 0,5%", `Garantida · ${R2(recTotal * REGRAS.pctSdrBase)}`),
+      x.bate ? gat("ok", `Meta de ${REGRAS.metaSdr} qualificações · 1% do recebido do time`, `Atingida · 1% de ${R0(recTotal)} = ${R2(recTotal * REGRAS.pctSdrMeta)}`) : gat("no", `Meta de ${REGRAS.metaSdr} qualificações · 1% do recebido do time`, `Faltam ${REGRAS.metaSdr - x.n} · 1% de ${R0(recTotal)} = ${R2(recTotal * REGRAS.pctSdrMeta)}`),
+      x.bate ? gat("lock", "Base · 0,5% do recebido do time", "Substituída pela meta de 1%") : gat("ok", "Base · 0,5% do recebido do time", `Garantida · 0,5% de ${R0(recTotal)} = ${R2(recTotal * REGRAS.pctSdrBase)}`),
       gat(x.diaria > 0 ? "ok" : "no", "Diária R$ 15 por dia", x.diaria > 0 ? `${R0(x.diaria)} · ${x.dias} dia${x.dias === 1 ? "" : "s"} com contrato` : "Nenhum dia com contrato"),
       ...(RIT.porSdr[x.p] ? [gat(RIT.porSdr[x.p] === "Meta batida" ? "ok" : "no", "Ritmo para a meta", RIT.porSdr[x.p])] : []),
     ];
@@ -430,7 +430,7 @@ function viewCivel() {
   <div class="sec atencao"><h2>Pontos de atenção</h2>${alerts(al)}</div>
   <div class="sec"><h2>Time · metas individuais</h2>
     <div class="panel"><h3>Closers</h3><p class="sub">Comissão sobre todo o valor recebido no mês (5% a partir de R$ 10 mil, 7% a partir de R$ 20 mil, 15% a partir de R$ 30 mil) e bônus extras.</p><div class="pcards">${closers.map(([p, l]) => cardCloser(p, l)).join("")}</div></div>
-    <div class="panel"><h3>SDRs</h3><p class="sub">O SDR qualifica o lead e agenda com o Closer; conta o lead dele que virou contrato. Meta de ${REGRAS.metaSdr} no mês → 1% do recebido do time (abaixo, 0,5%), mais a diária de R$ 15.</p><div class="pcards">${sdrCalc.map(cardSdr).join("")}</div><p class="note">Contratos sem data não entram na diária. A data usada é a do fechamento do contrato.</p></div></div>
+    <div class="panel"><h3>SDRs</h3><p class="sub">O SDR qualifica o lead e agenda com o Closer; conta o lead dele que virou contrato. Meta de ${REGRAS.metaSdr} no mês → 1% do recebido do time (abaixo, 0,5%), mais a diária de R$ 15. O percentual é sobre o total recebido pelo time no mês (${R0(recTotal)} até agora), por isso o valor é o mesmo para todos e cresce conforme o time recebe.</p><div class="pcards">${sdrCalc.map(cardSdr).join("")}</div><p class="note">Contratos sem data não entram na diária. A data usada é a do fechamento do contrato.</p></div></div>
   ${RIT.html}
   <div class="sec"><h2>Clientes</h2><div class="grid2">
     <div class="panel"><h3>De onde veio o cliente</h3>${bars(count(c, x => x.canal))}</div>
