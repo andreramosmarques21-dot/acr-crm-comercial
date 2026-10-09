@@ -54,8 +54,8 @@ function diasDoMes(mes) { const [y, m] = MES.split("-").map(Number); const tot =
 const dm_ = d => d ? d.slice(8, 10) + "/" + d.slice(5, 7) : "";
 const mesNome = () => (MI.rotulo || "").split("/")[0].toLowerCase() || "o mês";
 const semCampanhas = () => !D || !D.campanhas.length || (MI.parcial && !MI.campanhas_ate);
-// Promoção diária: R$ 15 por dia corrido; dia sem venda acumula e é pago no próximo dia com venda; o que sobra no fim do mês se perde.
-function diariaSdr(lista) { const dias = new Set(lista.filter(x => x.data).map(x => +x.data.slice(8, 10))); let acc = 0, pago = 0; for (let d = 1; d <= diasDoMes(); d++) { acc += REGRAS.diariaSdr; if (dias.has(d)) { pago += acc; acc = 0; } } return { pago, dias: dias.size }; }
+// Diária: R$ 15 por dia com pelo menos um contrato qualificado pelo SDR (data de fechamento do closer). Dia sem contrato não acumula.
+function diariaSdr(lista) { const dias = new Set(lista.filter(x => x.data).map(x => x.data)); return { pago: dias.size * REGRAS.diariaSdr, dias: dias.size }; }
 // Primeiro closer a atingir a meta individual, pela data dos contratos.
 function primeiroNaMeta(c) { let melhor = null; Object.entries(by(c, x => x.closer)).forEach(([p, l]) => { let acc = 0; for (const x of l.filter(x => x.data).sort((a, b) => a.data.localeCompare(b.data))) { acc += +x.valor_recebido; if (acc >= REGRAS.metaCloser) { if (!melhor || x.data < melhor.data) melhor = { p, data: x.data }; break; } } }); return melhor; }
 const SEM_CUSTO = ["Orgânico", "Indicação", "TikTok"];
@@ -330,12 +330,14 @@ function ritmoCivel(c, al) {
   const linhas = sdrs.map(p => { const l = sdrA.filter(x => x.pessoa === p), q = sum(l, x => x.qualificadas), n = c.filter(x => x.sdr === p).length, qd = q / diasTime.length, conv = q ? n / q : 0; return { p, q, n, qd, conv, falta: Math.max(REGRAS.metaSdr - n, 0), semReg: l.filter(x => !x.registrado).map(x => dm_(x.data)), proj: n + qd * du.rest * conv }; });
   const best = Math.max(...linhas.map(x => x.conv));
   const porSdr = {};
-  linhas.forEach(x => { porSdr[x.p] = !du.rest ? null : !x.falta ? "Meta batida" : x.conv ? `${(x.falta / x.conv / du.rest).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} qualificações por dia` : "Nenhuma qualificação virou contrato ainda"; });
+  linhas.forEach(x => { porSdr[x.p] = !du.rest ? null : !x.falta ? "Meta batida" : `Faltam ${x.falta} em ${du.rest} dias úteis · ${(x.falta / du.rest).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} por dia`; });
   const heat = (() => { const mx = Math.max(...sdrA.map(x => x.qualificadas || 0), 1);
     return `<div class="tbl-wrap"><table class="heat"><thead><tr><th>SDR</th>${diasTime.map(d => `<th class="n">${dm_(d)}</th>`).join("")}<th class="n">Total</th></tr></thead><tbody>${sdrs.map(p => `<tr><td>${esc(p)}</td>${diasTime.map(d => { const r = sdrA.find(x => x.pessoa === p && x.data === d); return !r || !r.registrado ? `<td class="n nr" title="Sem relatório">—</td>` : `<td class="n" style="--h:${(r.qualificadas || 0) / mx}" title="${r.ligacoes} ligações · ${r.atendidas} atendidas · ${r.qualificadas} qualificadas">${r.qualificadas}</td>`; }).join("")}<td class="n"><b>${sum(sdrA.filter(x => x.pessoa === p), x => x.qualificadas)}</b></td></tr>`).join("")}</tbody></table></div>`; })();
   const prev = `<div class="tbl-wrap"><table><thead><tr><th>SDR</th><th class="n">Qualificações por dia</th><th class="n">Viram contrato</th><th class="n">Contratos</th><th>Previsão no fim do mês</th><th>Para bater ${REGRAS.metaSdr}</th><th>Onde ganhar</th></tr></thead><tbody>${linhas.sort((a, b) => b.proj - a.proj).map(x => { const t = x.proj >= REGRAS.metaSdr ? "good" : x.proj >= REGRAS.metaSdr * .8 ? "warn" : "bad"; const ganho = x.qd * du.rest * (best - x.conv);
     return `<tr><td>${esc(x.p)}</td><td class="n">${x.qd.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}</td><td class="n">${P(x.conv, 0)}</td><td class="n">${x.n}</td><td><span class="pill ${t}">${du.rest ? "≈ " + Math.round(x.proj) : x.n} de ${REGRAS.metaSdr}</span></td><td>${porSdr[x.p] || "—"}</td><td>${x.conv >= best ? "Melhor conversão do time" : ganho >= .5 ? `+${Math.round(ganho)} contratos se chegar a ${P(best, 0)}` : "Aumentar volume de qualificações"}</td></tr>`; }).join("")}</tbody></table></div>`;
-  const clos = [...new Set(cloA.map(x => x.pessoa))].map(p => { const l = cloA.filter(x => x.pessoa === p), r = sum(l, x => x.reunioes), f = sum(l, x => x.fechamentos); return `<div class="kpi"><span class="l">${esc(p)}</span><span class="v">${P(f / r, 0)}</span><span class="s">${f} fechamento${f === 1 ? "" : "s"} em ${r} reuniões · ${l.length} dia${l.length === 1 ? "" : "s"} com relatório</span></div>`; }).join("");
+  // Contratos sempre pela planilha dos closers; reuniões pelo relatório diário (só nos dias em que houve relatório).
+  const clos = [...new Set(cloA.map(x => x.pessoa))].map(p => { const l = cloA.filter(x => x.pessoa === p), r = sum(l, x => x.reunioes), dias = new Set(l.map(x => x.data)), mes = c.filter(y => y.closer === p).length, f = c.filter(y => y.closer === p && dias.has(y.data)).length;
+    return `<div class="kpi"><span class="l">${esc(p)}</span><span class="v">${mes} contratos</span><span class="s">No mês, pela planilha. Nos ${l.length} dia${l.length === 1 ? "" : "s"} com relatório: ${f} contrato${f === 1 ? "" : "s"} em ${r} reuniões (${P(f / r, 0)})</span></div>`; }).join("");
   // conferências e avisos
   cloA.filter(x => x.fechamentos != null).forEach(x => { const real = c.filter(y => y.closer === x.pessoa && y.data === x.data).length; if (real !== x.fechamentos) al.push(["warn", `Relatório × planilha: ${x.pessoa} informou ${x.fechamentos} fechamento${x.fechamentos === 1 ? "" : "s"} em ${dm_(x.data)}, a planilha tem ${real}.`]); });
   linhas.filter(x => x.semReg.length).forEach(x => al.push(["warn", `${x.p} ficou sem relatório diário em ${x.semReg.length > 1 ? x.semReg.slice(0, -1).join(", ") + " e " + x.semReg.at(-1) : x.semReg[0]}.`]));
@@ -343,7 +345,7 @@ function ritmoCivel(c, al) {
     <div class="panel"><h3>Funil do time</h3>${funil([["Ligações", lig], ["Atendidas", at], ["Qualificadas", ql], ["Contratos", cj.length, "pela planilha dos closers"]])}
       ${du.rest ? `<div class="previsao ${tom}"><span class="pill ${tom}">Previsão</span><span>No ritmo atual, o time termina com <b>≈ ${Math.round(projN)} contratos</b> e <b>${R0(projR)} recebidos</b>${meta ? ` (${P(projR / meta, 0)} da meta de ${R0(meta)})` : ""}.</span></div>` : ""}</div>
     <div class="grid2"><div class="panel"><h3>Qualificações por dia</h3><p class="sub">Quanto mais forte a cor, mais qualificações. “—” = dia sem relatório.</p>${heat}</div>
-      <div class="panel"><h3>Closers · reunião que vira contrato</h3><p class="sub">Pelo relatório diário dos closers.</p><div class="kpis">${clos || '<p class="muted">Sem relatório dos closers.</p>'}</div></div></div>
+      <div class="panel"><h3>Closers · reunião que vira contrato</h3><p class="sub">Contratos pela planilha dos closers; reuniões pelo relatório diário.</p><div class="kpis">${clos || '<p class="muted">Sem relatório dos closers.</p>'}</div></div></div>
     <div class="panel"><h3>Previsão e caminho para a meta</h3><p class="sub">Ritmo de cada SDR por dia útil e quanto da qualificação vira contrato. “Onde ganhar” compara com a melhor taxa do time.</p>${prev}</div></div>`;
   return { html, porSdr };
 }
@@ -403,15 +405,14 @@ function viewCivel() {
     const lista = [
       x.bate ? gat("ok", `Meta de ${REGRAS.metaSdr} qualificações · 1%`, `Atingida · ${R2(recTotal * REGRAS.pctSdrMeta)}`) : gat("no", `Meta de ${REGRAS.metaSdr} qualificações · 1%`, `Falta ${REGRAS.metaSdr - x.n} · valeria ${R2(recTotal * REGRAS.pctSdrMeta)}`),
       x.bate ? gat("lock", "Base 0,5%", "Substituída pela meta de 1%") : gat("ok", "Base 0,5%", `Garantida · ${R2(recTotal * REGRAS.pctSdrBase)}`),
-      gat(x.diaria > 0 ? "ok" : "no", "Diária R$ 15 por dia", x.diaria > 0 ? `${R0(x.diaria)} · ${x.dias} dias com contrato` : "Nenhum dia com contrato"),
+      gat(x.diaria > 0 ? "ok" : "no", "Diária R$ 15 por dia", x.diaria > 0 ? `${R0(x.diaria)} · ${x.dias} dia${x.dias === 1 ? "" : "s"} com contrato` : "Nenhum dia com contrato"),
       ...(RIT.porSdr[x.p] ? [gat(RIT.porSdr[x.p] === "Meta batida" ? "ok" : "no", "Ritmo para a meta", RIT.porSdr[x.p])] : []),
-      gat(x.diaria < dm * REGRAS.diariaSdr ? "no" : "ok", "Diária cheia do mês", x.diaria < dm * REGRAS.diariaSdr ? `Perdeu ${R0(dm * REGRAS.diariaSdr - x.diaria)} acumulados` : "Completa")
     ];
     const imed = l.filter(y => /imediato/i.test(y.tipo_fechamento || "")).length;
     return `<div class="pcard"><div class="ph"><b>${esc(x.p)}</b><span><span class="muted">a receber</span> <b class="num">${R2(FIXO.sdr + x.meta + x.diaria)}</b></span></div>
       <div class="prog" title="${x.n} de ${REGRAS.metaSdr}"><span style="width:${Math.min(x.n / REGRAS.metaSdr, 1) * 100}%"></span></div>
       <ul class="gl">${gat("ok", "Valor fixo · SDR", R0(FIXO.sdr))}${lista.join("")}</ul>
-      <div class="chips">${chip("qualificações fechadas", `${x.n}/${REGRAS.metaSdr}`)}${chip("recebido gerado", R0(recG))}${chip("fechados na hora", P(imed / l.length, 0))}${chip("dias com contrato", x.dias)}</div></div>`;
+      <div class="chips">${chip("qualificações fechadas", `${x.n}/${REGRAS.metaSdr}`)}${chip("recebido gerado", R0(recG))}${chip("fechados na hora", P(imed / l.length, 0))}${chip(x.dias === 1 ? "dia com contrato" : "dias com contrato", x.dias)}</div></div>`;
   }
   const sem = [["1 a 7", 1, 7], ["8 a 14", 8, 14], ["15 a 21", 15, 21], ["22 a 28", 22, 28], ["29 a 31", 29, 31]].map(([l, a, b]) => [l, c.filter(x => x.data && +x.data.slice(8, 10) >= a && +x.data.slice(8, 10) <= b).length]);
   sem.push(["Sem data", c.filter(x => !x.data).length]);
