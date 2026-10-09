@@ -230,3 +230,14 @@ aside.side{position:relative;height:auto;overflow:visible;padding:0}
   .step:nth-child(4n){padding-right:0}
 }
 .node.neg .v{color:var(--bad)}
+/* Mês em andamento e campanhas pendentes */
+.mes-parcial{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:-6px 0 22px;padding:9px 14px;border-radius:999px;background:var(--accent-bg);color:var(--ink-2);font-size:13px;width:fit-content;max-width:100%}
+.mes-parcial b{color:var(--accent);font-weight:600}
+.mes-parcial .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 25%,transparent)}
+.aviso-camp{display:flex;gap:12px;align-items:flex-start;background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--warn,#c98a12);border-radius:12px;padding:14px 16px;margin-bottom:22px}
+.aviso-camp div{display:grid;gap:3px}
+.aviso-camp b{font-size:14.5px;color:var(--ink)}
+.aviso-camp span:not(.pill){font-size:13px;color:var(--muted)}
+.node.wait{background:var(--line-2);border-style:dashed}
+.node.wait .v{color:var(--muted);font-size:20px}
+@media (max-width:600px){.mes-parcial{border-radius:12px}}

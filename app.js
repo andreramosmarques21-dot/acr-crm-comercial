@@ -12,7 +12,7 @@ const REG = { SP: "Sudeste", RJ: "Sudeste", MG: "Sudeste", ES: "Sudeste", PR: "S
 const regiao = uf => REG[uf] || (uf && uf.length === 2 ? "Nordeste" : "Não informado");
 
 /* ---------- dados ---------- */
-let D = null, MES = null;
+let D = null, MES = null, MI = {};
 async function api(path) {
   const r = await fetch(`${C.SUPABASE_URL}/rest/v1/${path}`, { headers: { apikey: C.SUPABASE_KEY } });
   if (!r.ok) throw new Error("Falha ao ler " + path.split("?")[0]);
@@ -20,9 +20,10 @@ async function api(path) {
 }
 async function carregar(mes) {
   $("content").innerHTML = `<p class="muted">Carregando dados…</p>`;
-  const meses = await api("meses?select=id,rotulo&order=id.desc");
+  const meses = await api("meses?select=id,rotulo,parcial,dados_ate,campanhas_ate&order=id.desc");
   MES = mes || (meses[0] && meses[0].id);
   $("mes").innerHTML = meses.length ? meses.map(m => `<option value="${m.id}" ${m.id === MES ? "selected" : ""}>${m.rotulo}</option>`).join("") : `<option>Sem meses</option>`;
+  MI = meses.find(m => m.id === MES) || {};
   if (!MES) { D = null; return; }
   const q = `mes_id=eq.${MES}`;
   const [campanhas, civel, prev, metas, prem, trab] = await Promise.all([
@@ -47,7 +48,10 @@ const FAIXAS_CLOSER = [[30000, .15], [20000, .07], [10000, .05]]; // valor receb
 const faixaCloser = v => { const f = FAIXAS_CLOSER.find(([min]) => v >= min); const prox = [...FAIXAS_CLOSER].reverse().find(([min]) => v < min); return { min: f ? f[0] : 0, pct: f ? f[1] : 0, comissao: f ? v * f[1] : 0, prox: prox ? prox[0] : null }; };
 // Regras da apresentação do comercial (cível)
 const REGRAS = { metaCloser: 30000, bonusPrimeiro: 300, bonusMaior: 500, metaSdr: 15, pctSdrMeta: .01, pctSdrBase: .005, diariaSdr: 15 };
-function diasDoMes(mes) { const [y, m] = MES.split("-").map(Number); return new Date(y, m, 0).getDate(); }
+function diasDoMes(mes) { const [y, m] = MES.split("-").map(Number); const tot = new Date(y, m, 0).getDate(); return MI.parcial && MI.dados_ate ? Math.min(tot, +MI.dados_ate.slice(8, 10)) : tot; }
+const dm_ = d => d ? d.slice(8, 10) + "/" + d.slice(5, 7) : "";
+const mesNome = () => (MI.rotulo || "").split("/")[0].toLowerCase() || "o mês";
+const semCampanhas = () => !D || !D.campanhas.length || (MI.parcial && !MI.campanhas_ate);
 // Promoção diária: R$ 15 por dia corrido; dia sem venda acumula e é pago no próximo dia com venda; o que sobra no fim do mês se perde.
 function diariaSdr(lista) { const dias = new Set(lista.filter(x => x.data).map(x => +x.data.slice(8, 10))); let acc = 0, pago = 0; for (let d = 1; d <= diasDoMes(); d++) { acc += REGRAS.diariaSdr; if (dias.has(d)) { pago += acc; acc = 0; } } return { pago, dias: dias.size }; }
 // Primeiro closer a atingir a meta individual, pela data dos contratos.
@@ -134,7 +138,7 @@ function mktPrev() {
     return [g, i / pr, `${X(i / k)} por conversa · ${P(pr / k, 1)} viram cliente`, `${N(k)} conversas → ${ct.length} contratos → ${pr} protocolos`];
   }).sort((a, b) => (isFinite(a[1]) ? a[1] : 1e9) - (isFinite(b[1]) ? b[1] : 1e9)).concat(origensSemCusto(prot, c => honorario(c.beneficio, D.prem) * ex));
   return {
-    lead: `Só conta o cliente com processo protocolado: ${n} em setembro, sendo ${np} dos anúncios e ${no} de orgânico ou indicação. O escritório recebe quando o benefício é aprovado, então o valor é uma previsão.`,
+    lead: `Só conta o cliente com processo protocolado: ${n} em ${mesNome()}${MI.parcial ? " até agora" : ""}, sendo ${np} dos anúncios e ${no} de orgânico ou indicação. O escritório recebe quando o benefício é aprovado, então o valor é uma previsão.`,
     flow: [
       { k: "Gasto com anúncios", v: R0(inv), d: `${cp.length} campanhas`, m: [["Fatia do orçamento total", P(inv / invTot, 0)]], edge: "geram conversas" },
       { k: "Contatos recebidos", v: `${N(cont)} conversas`, d: "WhatsApp e Instagram", m: [["Cada conversa custou", X(inv / cont)]], edge: "consultor atende" },
@@ -182,7 +186,7 @@ function mktCons() {
   const inv = a.inv + b.inv + t.inv, n = a.n + b.n + t.n, cont = a.cont + b.cont + t.cont;
   const camps = [...A.camps.map(c => [c[0] + " (cível)", c[1], "", c[3]]), ...B.camps.map(c => [c[0] + " (prev.)", c[1], "", c[3]]), ...(T ? T.camps.map(c => [c[0] + " (trab.)", c[1], "", c[3]]) : [])].sort((x, y) => (isFinite(x[1]) ? x[1] : 1e9) - (isFinite(y[1]) ? y[1] : 1e9));
   const total = a.contr + b.esp, EQT = a.eq + b.eq + (t.eq || 0);
-  const setores = ["cível", "previdenciário"].concat(T ? ["trabalhista"] : []);
+  const setores = [D.civel.length && "cível", D.prev.length && "previdenciário", T && "trabalhista"].filter(Boolean);
   return {
     lead: `Todos os setores reúne o investimento em anúncios e o resultado de todos os setores com dados no mês (${setores.join(", ")}), com todas as origens de cliente.${T ? " O trabalhista entra em gasto e clientes, mas não tem valores em R$." : ""}`,
     flow: [
@@ -193,7 +197,7 @@ function mktCons() {
       { k: "Quanto entra", v: R0(total), d: `${R0(a.rec)} já entraram; ${R0(total - a.rec)} vêm depois${T ? " (trabalhista sem valor em R$)" : ""}`, m: [["Já no caixa", R0(a.rec)]], edge: "menos o gasto" },
       { k: "Lucro bruto", v: R0(total - inv), d: `${R0(a.rec - inv)} de caixa no mês, já descontado todo o gasto com anúncios`, m: [["Cada R$ 1 deve virar", X(total / inv)]], edge: "menos a equipe" },
       { k: "Custo colaborador", v: R0(EQT), d: `Cível ${R0(a.eq)} + Previdenciário ${R0(b.eq)}${T ? ` + Trabalhista ${R0(t.eq)}` : ""}`, m: [["Fixo + comissões", "todos os setores"]], neg: true, edge: "lucro líquido" },
-      { k: "Lucro líquido previsto", v: R0(total - inv - EQT), d: `Inclui parcelas do cível e honorários do previdenciário que ainda vão entrar. Sobra no caixa de setembro: ${R0(a.rec - inv - EQT)}, porque só o cível recebeu no mês (${R0(a.rec)}), mas anúncios e equipe dos ${setores.length} setores já foram pagos.`, m: [["Sobra no caixa do mês", R0(a.rec - inv - EQT)], ["Previsto (com o que vem depois)", R0(total - inv - EQT)]], profit: true }
+      { k: "Lucro líquido previsto", v: R0(total - inv - EQT), d: `Inclui parcelas do cível e honorários do previdenciário que ainda vão entrar. Sobra no caixa de ${mesNome()}: ${R0(a.rec - inv - EQT)}, porque só o cível recebeu no mês (${R0(a.rec)}), mas anúncios e equipe dos ${setores.length} setores já foram pagos.`, m: [["Sobra no caixa do mês", R0(a.rec - inv - EQT)], ["Previsto (com o que vem depois)", R0(total - inv - EQT)]], profit: true }
     ],
     tree: { root: ["Custo por cliente", R0(inv / n), "média de todos os setores"], a: ["Gasto total", R0(inv), `${setores.length} setores`], a1: null, a2: null, b: ["Clientes válidos", N(n), setores.length + " setores"], b1: null, b2: null },
     formula: `Custo por cliente = gasto total ÷ total de clientes  →  ${R0(inv)} ÷ ${N(n)} = ${R2(inv / n)}`,
@@ -203,10 +207,11 @@ function mktCons() {
 }
 const MKT = { civel: mktCivel, prev: mktPrev, trab: mktTrab, cons: mktCons };
 function renderMkt(f) {
-  const flow = f.flow.map((n, i) => `<div class="step"><span class="step-n">${String(i + 1).padStart(2, "0")}</span><div class="node ${n.cac ? "cac" : ""} ${n.profit ? "profit" : ""} ${n.neg ? "neg" : ""}"><span class="k">${n.k}</span><span class="v">${n.v}</span><span class="d">${n.d}</span><div class="m">${n.m.map(([a, b]) => `<span>${a}: <b>${b}</b></span>`).join("")}</div></div><span class="edge-l">${n.edge ? "→ " + n.edge : ""}</span></div>`).join("");
+  const flow = f.flow.map((n, i) => `<div class="step"><span class="step-n">${String(i + 1).padStart(2, "0")}</span><div class="node ${n.wait ? "wait" : ""} ${n.cac && !n.wait ? "cac" : ""} ${n.profit && !n.wait ? "profit" : ""} ${n.neg && !n.wait ? "neg" : ""}"><span class="k">${n.k}</span><span class="v">${n.v}</span><span class="d">${n.d}</span><div class="m">${n.m.map(([a, b]) => `<span>${a}: <b>${b}</b></span>`).join("")}</div></div><span class="edge-l">${n.edge ? "→ " + n.edge : ""}</span></div>`).join("");
   const max = Math.max(...f.camps.map(c => isFinite(c[1]) ? c[1] : 0), 1);
   const camps = f.camps.map(c => { const ok = isFinite(c[1]); const st = c[1] === 0 ? ["good", "Sem custo"] : !ok ? ["bad", "Sem cliente"] : c[1] <= f.teto * .5 ? ["good", "Bom"] : c[1] <= f.teto ? ["warn", "Atenção"] : ["bad", "Caro"];
     return `<div class="camp"><div class="top"><span class="name">${esc(c[0])}</span><span class="pill ${st[0]}">${st[1]}</span></div><span class="cv">${ok ? R2(c[1]) : "—"}</span><div class="meter"><span style="width:${ok ? c[1] / max * 100 : 0}%"></span></div>${c[2] ? `<span class="f">${c[2]}</span>` : ""}<span class="note">${c[3]}</span></div>`; }).join("");
+  if (f.semCamp) { $("view").innerHTML = avisoCampanhas() + `<section><div class="sec-head"><h2>O caminho do dinheiro</h2><p>${f.lead}</p></div><div class="flow">${flow}</div></section>`; return; }
   $("view").innerHTML = `<section><div class="sec-head"><h2>O caminho do dinheiro</h2><p>${f.lead}</p></div><div class="flow">${flow}</div></section>
     <section><div class="sec-head"><h2>De onde vem o custo por cliente</h2><p>Os números menores que, juntos, formam o custo por cliente.</p></div><div class="tree-wrap"><figure>${treeSVG(f.tree)}<figcaption>${f.caption}</figcaption></figure></div><div class="formula">${esc(f.formula)}</div></section>
     <section><div class="sec-head"><h2>Custo por cliente em cada anúncio</h2><p>Limite de referência: ${R2(f.teto)} por cliente.</p></div><div class="camps">${camps}</div>${f.insight ? `<p class="callout">${f.insight}</p>` : ""}</section>`;
@@ -221,7 +226,8 @@ function bars(rows) {
 const count = (a, f) => Object.entries(by(a, f)).map(([k, l]) => [k, l.length]).sort((x, y) => y[1] - x[1]);
 const kpis = k => `<div class="kpis">${k.map(([l, v, s]) => `<div class="kpi"><span class="l">${l}</span><span class="v">${v}</span><span class="s">${s}</span></div>`).join("")}</div>`;
 const alerts = a => a.length ? `<div class="alerts">${a.map(([t, x]) => `<div class="alert"><span class="pill ${t}">${{ bad: "Urgente", warn: "Atenção", good: "Ponto forte" }[t]}</span><span>${x}</span></div>`).join("")}</div>` : `<p class="muted">Nenhum alerta neste mês.</p>`;
-const head = (crumb, t, d) => `<div class="page-head"><span class="crumb">${crumb}</span><h1>${t}</h1><p>${d}</p></div>`;
+const selo = () => MI.parcial ? `<div class="mes-parcial"><span class="dot"></span><b>${MI.rotulo.split("/")[0]} em andamento</b><span>Dados até ${dm_(MI.dados_ate)}. Metas, comissões e diárias mostram o resultado até agora.</span></div>` : "";
+const head = (crumb, t, d) => `<div class="page-head"><span class="crumb">${crumb}</span><h1>${t}</h1><p>${d}</p></div>` + selo();
 const vazio = () => `<div class="soon"><span class="pill warn" style="justify-self:start">Sem dados</span><p>Ainda não há dados para este mês. Eles aparecem aqui assim que forem lançados.</p></div>`;
 
 /* ---------- telas ---------- */
@@ -230,9 +236,20 @@ function viewMkt(k) {
   $("content").innerHTML = head("Marketing no Comercial", "Do anúncio ao lucro", "Quanto custa conquistar cada cliente e quanto ele traz de volta. O custo por cliente (CAC) é o número principal.") +
     `<div class="subtabs">${Object.keys(names).map(n => `<a href="#mkt-${n}" ${n === k ? 'aria-current="page"' : ""}>${names[n]}</a>`).join("")}</div>
     <div class="glossary"><span><b>Custo por cliente (CAC):</b> quanto gastamos em anúncios para conseguir 1 cliente.</span><span><b>Contatos:</b> pessoas que chegaram pelo anúncio.</span><span><b>Valor a receber:</b> parcelas e honorários que ainda vão entrar.</span><span><b>Retorno:</b> quantos reais voltaram para cada R$ 1 gasto.</span></div><div id="view"></div>`;
-  if (!D || !D.campanhas.length) { $("view").innerHTML = vazio(); return; }
-  renderMkt(MKT[k]());
+  if (!D) { $("view").innerHTML = vazio(); return; }
+  const tem = { civel: D.civel.length, prev: D.prev.length, trab: D.trab.length, cons: D.civel.length + D.prev.length + D.trab.length }[k];
+  if (!tem) { $("view").innerHTML = vazio(); return; }
+  const f = MKT[k]();
+  if (semCampanhas()) aguardaCampanhas(f);
+  renderMkt(f);
 }
+// Sem números de campanha no mês: mostra o que já é conhecido e marca o resto como "aguardando".
+const DEPENDE_ANUNCIO = /^(Gasto com anúncios|Contatos recebidos|Custo por (cliente|contrato)|Lucro|Custo total do setor)/;
+function aguardaCampanhas(f) {
+  f.semCamp = true;
+  f.flow = f.flow.map(n => DEPENDE_ANUNCIO.test(n.k) ? { k: n.k, v: "Aguardando", d: "Depende dos números das campanhas", m: [["Atualização", "semanal"]], wait: true, edge: n.edge } : n);
+}
+const avisoCampanhas = () => `<div class="aviso-camp"><span class="pill warn">Campanhas</span><div><b>Números das campanhas de ${mesNome()} ainda não chegaram</b><span>Eles chegam toda semana. Até lá, gasto, contatos, custo por cliente e lucro ficam como “aguardando”. Contratos, valores e custo da equipe já estão atualizados.</span></div></div>`;
 function viewCivel() {
   const c = D ? D.civel : [];
   $("content").innerHTML = head("Setores do Comercial · Cível", "Cível", "Contratos fechados pelos Closers: quem qualificou, de onde veio o cliente e como pagou.");
@@ -277,7 +294,7 @@ function viewCivel() {
   const sem = [["1 a 7", 1, 7], ["8 a 14", 8, 14], ["15 a 21", 15, 21], ["22 a 28", 22, 28], ["29 a 31", 29, 31]].map(([l, a, b]) => [l, c.filter(x => x.data && +x.data.slice(8, 10) >= a && +x.data.slice(8, 10) <= b).length]);
   sem.push(["Sem data", c.filter(x => !x.data).length]);
   const al = [], fim = sem[3][1] + sem[4][1], datados = n - sem[5][1];
-  if (datados && fim / datados < .2) al.push(["bad", `Só ${fim} contratos depois do dia 21. Vale entender se faltou contato, agenda ou registro.`]);
+  if (!MI.parcial && datados && fim / datados < .2) al.push(["bad", `Só ${fim} contratos depois do dia 21. Vale entender se faltou contato, agenda ou registro.`]);
   closers.forEach(([p, l]) => { const v = sum(l, x => x.valor_recebido), f = faixaCloser(v); if (f.pct) al.push(["good", `${p} acumulou ${R0(v)} e está na faixa de ${P(f.pct, 0)} (comissão de ${R0(f.comissao)}).`]); else if (v >= 5000) al.push(["warn", `${p} acumulou ${R0(v)}: faltam ${R0(10000 - v)} para a primeira faixa de comissão (5%).`]); });
   if (primeiro) al.push(["good", `${primeiro.p} foi o primeiro a bater a meta individual de ${R0(REGRAS.metaCloser)} (dia ${primeiro.data.slice(8, 10)}): bônus de ${R0(REGRAS.bonusPrimeiro)}.`]);
   if (maior && !timeMeta) al.push(["warn", `${maior[0]} teve o maior faturamento, mas o bônus de ${R0(REGRAS.bonusMaior)} só vale se o time bater a meta geral.`]);
@@ -345,11 +362,11 @@ function viewTrab() {
   const motivo = x => !x.documentacao && !x.cadastro_astrea ? "Sem documentação e sem cadastro" : !x.cadastro_astrea ? "Sem cadastro no Astrea" : "Sem documentação completa";
   const al = [];
   if (meta) al.push(nv >= meta ? ["good", `Meta do setor batida: ${nv} contratos válidos de ${meta} (${P(nv / meta, 0)}).`] : ["warn", `${meta - nv === 1 ? "Falta 1 contrato válido" : `Faltam ${meta - nv} contratos válidos`} para a meta de ${meta}.`]);
-  if (pend.length) al.push(["bad", `${pend.length} contratos fechados ainda não contam: faltam documentação ou cadastro no Astrea. Regularizar baixa o custo por contrato de ${R0(inv / nv)} para ${R0(inv / n)}.`]);
+  if (pend.length) al.push(["bad", `${pend.length} contrato${pend.length === 1 ? "" : "s"} fechado${pend.length === 1 ? "" : "s"} ainda não conta${pend.length === 1 ? "" : "m"}: faltam documentação ou cadastro no Astrea.${semCampanhas() ? "" : ` Regularizar baixa o custo por contrato de ${R0(inv / nv)} para ${R0(inv / n)}.`}`]);
   if (meta) al.push(top ? ["good", `${top} foi o primeiro a atingir sozinho a meta de ${meta} contratos válidos: bônus de R$ 100.`] : ["warn", `Ninguém atingiu sozinho a meta de ${meta} contratos válidos, então o bônus de R$ 100 não foi pago. ${lider} chegou mais perto, com ${cons[0].v}.`]);
   cons.filter(x => x.tot && !x.v).forEach(x => al.push(["warn", `${x.p} fechou ${x.tot} contrato(s), mas nenhum está válido ainda.`]));
   const pctRows = rows => rows.map(([k, v]) => [k, v, P(v / n, 0)]);
-  $("content").innerHTML += `<div class="sec">${kpis([["Contratos fechados", n, "No mês"], ["Contratos válidos", nv, P(nv / n, 0) + " dos fechados"], ["Pendentes", pend.length, "Sem documentação ou cadastro"], ["Meta do setor", meta ? `${nv}/${meta}` : "—", meta ? P(nv / meta, 0) + " da meta" : ""], ["Custo por contrato", R0(inv / nv), `Gasto de ${R0(inv)} ÷ válidos`], ["Custo colaborador", R0(equipeTrab().total), `Fixo ${R0(equipeTrab().fixo)} + prêmios ${R0(equipeTrab().variavel)}`]])}</div>
+  $("content").innerHTML += `<div class="sec">${kpis([["Contratos fechados", n, "No mês"], ["Contratos válidos", nv, P(nv / n, 0) + " dos fechados"], ["Pendentes", pend.length, "Sem documentação ou cadastro"], ["Meta do setor", meta ? `${nv}/${meta}` : "—", meta ? P(nv / meta, 0) + " da meta" : ""], semCampanhas() ? ["Custo por contrato", "Aguardando", "Números das campanhas chegam toda semana"] : ["Custo por contrato", R0(inv / nv), `Gasto de ${R0(inv)} ÷ válidos`], ["Custo colaborador", R0(equipeTrab().total), `Fixo ${R0(equipeTrab().fixo)} + prêmios ${R0(equipeTrab().variavel)}`]])}</div>
   <div class="sec"><h2>Pontos de atenção</h2>${alerts(al)}</div>
   <div class="sec"><h2>Time · metas individuais</h2><div class="panel"><h3>Consultores</h3><p class="sub">Por consultor, contando só contratos válidos: R$ 30 por contrato até ${LIM - 1}; a partir de ${LIM} (a meta do mês), R$ 40 por contrato, valendo para todos. O primeiro a atingir sozinho a meta do mês (${meta} contratos válidos) ganha R$ 100 a mais.</p><div class="pcards">${cons.map(card).join("")}</div></div></div>
   <div class="sec"><h2>Contratos</h2><div class="grid2">
